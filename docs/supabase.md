@@ -24,6 +24,8 @@
 | `VITE_SUPABASE_URL` | 프로젝트 URL, 예: `https://xxxxxxxx.supabase.co` |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | publishable key 또는 legacy anon key |
 
+Variables 대신 동일한 이름의 **Repository secrets**에 등록해도 동작합니다. 두 곳에 같은 이름이 있으면 Variables 값이 우선 적용됩니다. 이름을 정확히 맞춰 주세요.
+
 3. **Settings → Pages → Source**가 **GitHub Actions**인지 확인합니다.
 4. 코드 변경을 `main`에 커밋하고 푸시합니다.
 
