@@ -1,0 +1,30 @@
+{
+  "name": "99-9side",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test:behavior": "node --experimental-strip-types --test scripts/behavior.test.ts",
+    "test:physics": "node --experimental-strip-types --test scripts/physics.test.ts",
+    "test:persistence": "node --experimental-strip-types --test scripts/persistence.test.ts",
+    "test:speech": "node --experimental-strip-types --test scripts/speech.test.ts",
+    "dev": "vite",
+    "build": "tsc && tsc -p tsconfig.server.json && vite build",
+    "build:server": "tsc && tsc -p tsconfig.server.json && vite build --mode server",
+    "start": "node --experimental-strip-types server/index.ts",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/delaunator": "^5.0.3",
+    "@types/node": "^26.6.4",
+    "@types/three": "^0.186.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1",
+    "delaunator": "^5.1.0",
+    "three": "^0.186.1"
+  }
+}
