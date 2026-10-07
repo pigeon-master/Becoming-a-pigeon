@@ -2,7 +2,8 @@ import type { createWorld } from './world'
 import type { FaceAsset, FlockSnapshot, PigeonOwner } from './pigeon-data'
 import type * as THREE from 'three'
 import { localFlock } from './local-flock'
-import { SERVER_STORAGE } from './storage-mode'
+import { SERVER_STORAGE, SUPABASE_STORAGE } from './storage-mode'
+import { supabaseFlock } from './supabase-flock'
 import { rememberOwners } from './ownership'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -24,16 +25,17 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
   const sync = (focus?: string) => {
     const work = queue.then(async () => {
       if (stopped) return
-      if (!SERVER_STORAGE && !recoveredLocalOwners) {
+      if (!SERVER_STORAGE && !SUPABASE_STORAGE && !recoveredLocalOwners) {
         rememberOwners(await localFlock.owners()); recoveredLocalOwners = true
       }
-      const snapshot = SERVER_STORAGE ? await request<FlockSnapshot>('/api/pigeons') : await localFlock.snapshot()
+      const snapshot = SUPABASE_STORAGE ? await supabaseFlock.snapshot() : SERVER_STORAGE ? await request<FlockSnapshot>('/api/pigeons') : await localFlock.snapshot()
       const pending = snapshot.birds.filter(bird => !world.has(bird.id))
       if (pending.length) {
         const { decodeFace } = await import('./face')
         for (const bird of pending) {
           let asset: FaceAsset | null
-          if (SERVER_STORAGE) {
+          if (SUPABASE_STORAGE) asset = await supabaseFlock.get(bird.id)
+          else if (SERVER_STORAGE) {
             const response = await fetch(`/api/pigeons/${bird.id}`, { cache: 'no-store', signal: AbortSignal.timeout(20000) })
             if (response.status === 404) continue
             if (!response.ok) throw new Error('서버의 얼굴 데이터를 불러오지 못했어요.')
@@ -71,7 +73,8 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
     async remove(owner: PigeonOwner) {
       // Serialize polling behind deletion and its animation; stale snapshots cannot resurrect it.
       const work = queue.then(async () => {
-        if (SERVER_STORAGE) await request(`/api/pigeons/${owner.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${owner.token}` } })
+        if (SUPABASE_STORAGE) await supabaseFlock.remove(owner)
+        else if (SERVER_STORAGE) await request(`/api/pigeons/${owner.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${owner.token}` } })
         else await localFlock.remove(owner)
         drafts.delete(owner.id)
         await world.remove(owner.id)
@@ -82,9 +85,13 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
     },
     async publish(face: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>) {
       const { encodeFace } = await import('./face')
-      const id = crypto.randomUUID(), token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
+      const id = crypto.randomUUID()
+      let token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
       const asset = encodeFace(face)
-      if (SERVER_STORAGE) {
+      if (SUPABASE_STORAGE) {
+        const owner = await supabaseFlock.save(id, asset)
+        token = owner.token
+      } else if (SERVER_STORAGE) {
         const body = JSON.stringify({ id, token, asset })
         const save = () => request<FlockSnapshot>('/api/pigeons', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
         try { await save() } catch { await save() }
@@ -96,6 +103,7 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
     },
     previewSpeech(id: string, message: string, automatic: number[] = []) { drafts.set(id, { message, automatic }); world.say(id, message) },
     async say(owner: PigeonOwner, message: string, automatic: number[] = []) {
+      if (SUPABASE_STORAGE) { await supabaseFlock.say(owner, message, automatic); return }
       if (!SERVER_STORAGE) { await localFlock.say(owner, message, automatic); return }
       await request(`/api/pigeons/${owner.id}/message`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner.token}` }, body: JSON.stringify({ message, automatic }) })
     },

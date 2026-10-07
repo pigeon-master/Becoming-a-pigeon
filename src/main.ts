@@ -2,6 +2,7 @@ import './style.css'
 import { createWorld } from './world'
 import { connectFlock } from './shared-flock'
 import { createSpeech } from './speech'
+import { SUPABASE_STORAGE } from './storage-mode'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <p id="copyright"><span class="wide-text">ⓒ2026. CRAPPYROOM. All rights reserved.</span></p>
@@ -116,7 +117,7 @@ snap.onclick = async () => {
   } catch (error) {
     if (request !== requestId || !dialog.open) return
     console.error('Pigeon creation failed:', error)
-    showError(error instanceof Error && (error.message.includes('얼굴') || error.message.includes('광장') || error.message.includes('서버') || error.message.includes('브라우저')) ? error.message : '얼굴 변환 또는 저장을 완료하지 못했어요. 다시 시도해 주세요.')
+    showError(error instanceof Error && (SUPABASE_STORAGE || error.message.includes('얼굴') || error.message.includes('광장') || error.message.includes('서버') || error.message.includes('브라우저')) ? error.message : '얼굴 변환 또는 저장을 완료하지 못했어요. 다시 시도해 주세요.')
   } finally { if (request === requestId) { busy = false; loading.hidden = true } }
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden && stream) { requestId++; stopCamera(); loading.hidden = true; showError('카메라가 꺼졌어요. 다시 켜서 촬영해 주세요.') } })

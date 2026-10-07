@@ -9,4 +9,4 @@
 
 PowerShell에서는 `npm.cmd run build`로 로컬 빌드를 확인할 수 있습니다. GitHub Actions에서는 별도의 개발용 HTTPS 인증서가 필요하지 않습니다.
 
-GitHub Pages는 정적 파일만 제공하므로 이 배포에서는 기본 로컬 저장 모드가 사용됩니다. 생성한 비둘기는 각 브라우저의 IndexedDB에 저장되며 다른 사람의 브라우저와 공유되지 않습니다. 여러 사용자에게 같은 비둘기 무리를 보여주려면 나중에 별도 서버와 데이터베이스를 배포해야 합니다.
+배포 워크플로는 Supabase 모드로 빌드합니다. GitHub Actions의 Repository variables에 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`를 등록하고 Supabase에서 익명 인증과 데이터베이스를 설정하세요. 자세한 순서는 [Supabase 연결 안내](supabase.md)에 있습니다. Supabase가 비둘기·말풍선 저장과 소유자 권한을 담당하며 별도 Node 서버는 필요하지 않습니다.

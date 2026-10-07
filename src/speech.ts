@@ -3,6 +3,7 @@ import type { SpeechChar, SpeechEdit } from './speech-text'
 import type { connectFlock } from './shared-flock'
 import type { FlockSnapshot, PigeonOwner } from './pigeon-data'
 import { readOwners, rememberOwners } from './ownership'
+import { SUPABASE_STORAGE } from './storage-mode'
 
 export function createSpeech(shared: ReturnType<typeof connectFlock>) {
   const button = document.getElementById('speak') as HTMLButtonElement
@@ -36,13 +37,19 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
         if (owner?.id !== target.id) return
         error.textContent = reason instanceof Error ? reason.message : '말풍선을 저장하지 못했어요. 다시 시도해 주세요.'
         error.hidden = false
+        if (SUPABASE_STORAGE && panel.hidden) {
+          panel.hidden = false; button.setAttribute('aria-expanded', 'true')
+          input.focus()
+        }
       }
     })
   }
   const changed = () => {
     count(); dirty = true
     if (owner) shared.previewSpeech(owner.id, input.value, automaticIndices(chars))
-    clearTimeout(saveTimer); saveTimer = setTimeout(persist, 650)
+    clearTimeout(saveTimer)
+    // Supabase publishes submitted text; typing remains a preview in this browser.
+    if (!SUPABASE_STORAGE) saveTimer = setTimeout(persist, 650)
   }
   const distort = (caret: number) => {
     const before = automaticIndices(chars).length
@@ -125,7 +132,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
     if (!panel.hidden) { count(); input.focus() } else close()
   }
   document.getElementById('speech-close')!.onclick = close
-  input.addEventListener('blur', persist)
+  input.addEventListener('blur', () => { if (!SUPABASE_STORAGE) persist() })
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter') {
       if (!event.isComposing && !composing && event.keyCode !== 229) event.preventDefault()
@@ -153,7 +160,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
     refresh(snapshot: FlockSnapshot) {
       const owned = readOwners()
       // Snapshots are ordered oldest-first; skip deleted/evicted and other users' pigeons.
-      const bird = snapshot.birds.filter(b => owned.has(b.id)).at(-1)
+      const bird = snapshot.birds.filter(b => owned.has(b.id) && (!SUPABASE_STORAGE || b.owned)).at(-1)
       const next = bird ? owned.get(bird.id) : undefined
       if (owner?.id !== next?.id) {
         // Save a surviving bird's draft before switching to a newer capture from another tab.

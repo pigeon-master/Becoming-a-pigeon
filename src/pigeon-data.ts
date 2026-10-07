@@ -5,6 +5,6 @@ export interface FaceAsset {
   indices: number[]
   image: string
 }
-export interface PigeonRecord { id: string; createdAt: number; replaces: string | null; message: string; automatic?: number[] }
+export interface PigeonRecord { id: string; createdAt: number; replaces: string | null; message: string; automatic?: number[]; owned?: boolean }
 export interface PigeonOwner { id: string; token: string }
 export interface FlockSnapshot { revision: number; birds: PigeonRecord[] }

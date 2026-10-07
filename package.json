@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:supabase": "node --test scripts/supabase.test.mjs",
+    "test:supabase-browser": "node scripts/supabase-browser.mjs",
     "test:behavior": "node --experimental-strip-types --test scripts/behavior.test.ts",
     "test:physics": "node --experimental-strip-types --test scripts/physics.test.ts",
     "test:persistence": "node --experimental-strip-types --test scripts/persistence.test.ts",
@@ -15,6 +17,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.63.0",
     "@types/delaunator": "^5.0.3",
     "@types/node": "^26.6.4",
@@ -24,6 +27,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
+    "@supabase/supabase-js": "^2.117.2",
     "delaunator": "^5.1.0",
     "three": "^0.186.1"
   }
