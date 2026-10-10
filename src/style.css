@@ -6,6 +6,7 @@
 body,button,input,output,.speech-bubble{font-family:var(--ui-font);font-weight:400;letter-spacing:normal}
 #action-bar button,#join{font-weight:300}
 #action-bar button{border-radius:20px}
+#action-bar:has(#speak[hidden]){top:50%;bottom:auto;transform:translate(-50%,-50%)}
 #speech-input{font-family:var(--ui-font);font-weight:400;letter-spacing:normal}
 #speech-count{font-family:var(--ui-font);font-weight:300;letter-spacing:normal;transform:scaleX(1.1)}
 .speech-bubble{font-family:var(--ui-font);font-weight:400;letter-spacing:normal;padding-inline:23px;border-radius:28px}
