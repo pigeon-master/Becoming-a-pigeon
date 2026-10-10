@@ -34,8 +34,8 @@ try {
         bird.id=String(i);bird.root.position.set(0,0,i*3);bird.root.rotation.y=0;bird.settle=0;
         scene.add(bird.root);birds.push(bird);
       }
-      controller=createPigeonBehaviors(scene,birds,()=>kind==='peck'?.1:kind==='dropping'?.5:.61);
-      for(let i=0;i<3200;i++){
+      controller=createPigeonBehaviors(scene,birds,()=>kind==='peck'?.1:kind==='dropping'?.5:0);
+      for(let i=0;i<24000;i++){
         controller.update(.025,true);
         if(kind==='peck'&&birds[0].head.position.y<.56)break;
         if(kind==='dropping'&&controller.summary.droppings){for(let j=0;j<25;j++)controller.update(.025,false);break;}

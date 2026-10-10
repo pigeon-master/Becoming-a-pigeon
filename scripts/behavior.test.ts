@@ -59,10 +59,10 @@ test('white liquid falls, splashes on the ground, fades and releases its objects
 
 test('paired behavior mounts one bird, flaps, separates and cancels both partners safely', () => {
   const birds = [bird('top'), bird('bottom', 0, 3)]
-  const scene = new THREE.Scene(), controller = createPigeonBehaviors(scene, birds, () => .61)
-  for (let i = 0; i < 1400 && !controller.summary.actions.length; i++) controller.update(.05, true)
-  assert.equal(controller.summary.actions[0]?.kind, 'mating')
-  assert.equal(controller.summary.actions[0]?.ids.length, 2)
+  const scene = new THREE.Scene(), controller = createPigeonBehaviors(scene, birds, () => 0)
+  for (let i = 0; i < 12000 && !controller.summary.actions.some(action => action.kind === 'mating'); i++) controller.update(.05, true)
+  const pair = controller.summary.actions.find(action => action.kind === 'mating')
+  assert.equal(pair?.ids.length, 2)
   for (let i = 0; i < 35; i++) controller.update(.05, false)
   assert.equal(controller.mounted(birds[0]), true)
   assert.ok(birds[0].root.position.y > .6 && birds[0].root.position.y < .8)
@@ -71,7 +71,7 @@ test('paired behavior mounts one bird, flaps, separates and cancels both partner
   assert.ok(Math.abs(birds[0].wings[0].rotation.z) > .5)
   assert.ok(scene.children.some(object => object instanceof THREE.Mesh && (object.material as THREE.MeshBasicMaterial).color.getHex() === 0xff72ae))
   controller.cancel(birds[1])
-  assert.equal(controller.summary.actions.length, 0)
+  assert.equal(controller.summary.actions.some(action => action.kind === 'mating'), false)
   assert.equal(birds[0].root.position.y, 0)
   assert.ok(birds[0].root.position.distanceTo(birds[1].root.position) >= 2.7)
   assert.equal(birds[0].wings[0].scale.y, 1)
@@ -81,20 +81,35 @@ test('paired behavior mounts one bird, flaps, separates and cancels both partner
   controller.dispose()
 })
 
-test('paired behavior first starts after 25 seconds and keeps a 25-second interval', () => {
+test('failed probability rolls leave even a nearby pair walking instead of retrying every frame', () => {
   const birds = [bird('top'), bird('bottom', 0, 3)]
   const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => .61)
   const starts: number[] = []
   let wasMating = false
-  for (let i = 0; i < 1600; i++) {
+  for (let i = 0; i < 12000; i++) {
     controller.update(.05, true)
     const mating = controller.summary.actions.some(action => action.kind === 'mating')
     if (mating && !wasMating) starts.push((i + 1) * .05)
     wasMating = mating
   }
-  assert.equal(starts.length, 3)
-  assert.ok(starts[0] >= 25 && starts[0] < 25.1)
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 25 && starts[i] - starts[i - 1] < 25.1)
+  assert.equal(starts.length, 0)
+  controller.dispose()
+})
+
+test('a small flock cannot repeatedly mate without a long individual rest', () => {
+  const birds = [bird('top'), bird('bottom', 0, 3)]
+  const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => 0)
+  const starts: number[] = []
+  let wasMating = false
+  for (let i = 0; i < 18000; i++) {
+    controller.update(.05, true)
+    const mating = controller.summary.actions.some(action => action.kind === 'mating')
+    if (mating && !wasMating) starts.push((i + 1) * .05)
+    wasMating = mating
+  }
+  assert.ok(starts.length > 1, 'Rare behavior remains possible')
+  assert.ok(starts[0] >= 60)
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 158, 'Pair must finish and rest before mating again')
   controller.dispose()
 })
 

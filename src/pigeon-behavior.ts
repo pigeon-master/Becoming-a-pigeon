@@ -17,14 +17,14 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
   const between = (a: number, b: number) => a + random() * (b - a)
   const actions = new Set<Action>(), busy = new Map<Pigeon, Action>()
   const cooldowns = new Map<Pigeon, number>(), droppings: Dropping[] = []
+  const matingRest = new Map<Pigeon, number>()
   const sphere = new THREE.SphereGeometry(1, 10, 7)
   const hearts: { mesh: THREE.Mesh; age: number; material: THREE.MeshBasicMaterial }[] = []
   const heart = new THREE.Shape()
   heart.moveTo(0, -.5); heart.bezierCurveTo(-.9, .05, -.55, .8, 0, .35); heart.bezierCurveTo(.55, .8, .9, .05, 0, -.5)
   const heartGeometry = new THREE.ShapeGeometry(heart)
   const tip = new THREE.Vector3()
-  const matingInterval = 25
-  let matingCooldown = matingInterval
+  let matingCooldown = between(60, 90)
   const eligible = (bird: Pigeon) => bird.root.visible && bird.root.position.y < .05 && !bird.flightDuration && bird.settle <= 0 && !busy.has(bird)
   const reset = (bird: Pigeon) => {
     bird.root.position.y = 0; bird.torso.position.y = 0; bird.torso.rotation.x = 0
@@ -44,6 +44,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
     for (const bird of action.birds) {
       busy.delete(bird)
       if (birds.includes(bird)) { reset(bird); bird.chooseTarget(); cooldowns.set(bird, between(14, 32)) }
+      if (action.kind === 'mating' && birds.includes(bird)) matingRest.set(bird, between(150, 240))
     }
     actions.delete(action)
   }
@@ -62,7 +63,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
   }
   const begin = (kind: Kind, participants: Pigeon[]) => {
     const action: Action = { kind, birds: participants, age: 0, duration: kind === 'peck' ? between(2.5, 4.5) : kind === 'dropping' ? 2.7 : between(8.8, 10), start: participants[0].root.position.clone(), landing: new THREE.Vector3(), emitted: false, nextPeck: .35, peckStart: 0, peckDuration: .2, nextHeart: 1.25 }
-    if (kind === 'mating') { action.landing.copy(landingFor(participants[0], participants[1])); matingCooldown = matingInterval }
+    if (kind === 'mating') action.landing.copy(landingFor(participants[0], participants[1]))
     participants.forEach(bird => { reset(bird); busy.set(bird, action) }); actions.add(action)
   }
   return {
@@ -74,15 +75,25 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
     },
     get summary() { return { actions: [...actions].map(action => ({ kind: action.kind, ids: action.birds.map(b => b.id) })), droppings: droppings.length } },
     update(dt: number, allowNew: boolean, excluded: (bird: Pigeon) => boolean = () => false) {
-      matingCooldown = Math.max(0, matingCooldown - dt)
+      if (allowNew) matingCooldown = Math.max(0, matingCooldown - dt)
+      for (const [bird, remaining] of matingRest) {
+        if (!birds.includes(bird)) matingRest.delete(bird)
+        else matingRest.set(bird, Math.max(0, remaining - dt))
+      }
       for (const bird of cooldowns.keys()) if (!birds.includes(bird)) cooldowns.delete(bird)
       for (const action of [...actions]) if (action.birds.some(bird => !birds.includes(bird) || excluded(bird))) finish(action)
       const cap = Math.min(5, Math.max(1, Math.ceil(birds.length * .22)))
-      // A separate opportunity timer makes pairs observable without requiring two
-      // individual random timers to line up. Only one pair can start at a time.
-      if (allowNew && matingCooldown === 0 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')) {
-        const available = birds.filter(bird => !excluded(bird) && eligible(bird))
-        for (const bird of available) {
+      // A failed opportunity also resets the timer: never retry the probability
+      // every frame. Small flocks have both longer intervals and lower chances.
+      if (allowNew && matingCooldown === 0) {
+        const flockSize = birds.filter(bird => bird.root.visible && !excluded(bird)).length
+        matingCooldown = flockSize <= 5 ? between(60, 90) : between(45, 65)
+        const chance = Math.min(.32, .1 + Math.max(0, flockSize - 2) * .012)
+        const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
+        const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
+        const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1
+        for (let i = 0; offset >= 0 && i < available.length; i++) {
+          const bird = available[(offset + i) % available.length]
           const partner = available.find(other => other !== bird && other.root.position.distanceTo(bird.root.position) < 6 && birds.every(third => third === bird || third === other || third.root.position.distanceTo(other.root.position) > 2.7))
           if (partner) { begin('mating', [bird, partner]); break }
         }
