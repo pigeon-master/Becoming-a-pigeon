@@ -84,11 +84,11 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       for (const action of [...actions]) if (action.birds.some(bird => !birds.includes(bird) || excluded(bird))) finish(action)
       const cap = Math.min(5, Math.max(1, Math.ceil(birds.length * .22)))
       // A failed opportunity also resets the timer: never retry the probability
-      // every frame. Small flocks have both longer intervals and lower chances.
+      // every frame. Small flocks have longer intervals between opportunities.
       if (allowNew && matingCooldown === 0) {
         const flockSize = birds.filter(bird => bird.root.visible && !excluded(bird)).length
         matingCooldown = flockSize <= 5 ? between(45, 60) : between(35, 50)
-        const chance = Math.min(.45, .25 + Math.max(0, flockSize - 2) * .03)
+        const chance = .5
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
         const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
         const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1
