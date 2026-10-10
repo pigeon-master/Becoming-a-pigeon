@@ -108,8 +108,8 @@ test('a small flock cannot repeatedly mate without a long individual rest', () =
     wasMating = mating
   }
   assert.ok(starts.length > 1, 'Rare behavior remains possible')
-  assert.ok(starts[0] >= 60)
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 158, 'Pair must finish and rest before mating again')
+  assert.ok(starts[0] >= 45)
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 108, 'Pair must finish and rest before mating again')
   controller.dispose()
 })
 

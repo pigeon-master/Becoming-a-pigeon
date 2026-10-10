@@ -24,7 +24,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
   heart.moveTo(0, -.5); heart.bezierCurveTo(-.9, .05, -.55, .8, 0, .35); heart.bezierCurveTo(.55, .8, .9, .05, 0, -.5)
   const heartGeometry = new THREE.ShapeGeometry(heart)
   const tip = new THREE.Vector3()
-  let matingCooldown = between(60, 90)
+  let matingCooldown = between(45, 60)
   const eligible = (bird: Pigeon) => bird.root.visible && bird.root.position.y < .05 && !bird.flightDuration && bird.settle <= 0 && !busy.has(bird)
   const reset = (bird: Pigeon) => {
     bird.root.position.y = 0; bird.torso.position.y = 0; bird.torso.rotation.x = 0
@@ -44,7 +44,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
     for (const bird of action.birds) {
       busy.delete(bird)
       if (birds.includes(bird)) { reset(bird); bird.chooseTarget(); cooldowns.set(bird, between(14, 32)) }
-      if (action.kind === 'mating' && birds.includes(bird)) matingRest.set(bird, between(150, 240))
+      if (action.kind === 'mating' && birds.includes(bird)) matingRest.set(bird, between(100, 160))
     }
     actions.delete(action)
   }
@@ -87,8 +87,8 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       // every frame. Small flocks have both longer intervals and lower chances.
       if (allowNew && matingCooldown === 0) {
         const flockSize = birds.filter(bird => bird.root.visible && !excluded(bird)).length
-        matingCooldown = flockSize <= 5 ? between(60, 90) : between(45, 65)
-        const chance = Math.min(.32, .1 + Math.max(0, flockSize - 2) * .012)
+        matingCooldown = flockSize <= 5 ? between(45, 60) : between(35, 50)
+        const chance = Math.min(.45, .25 + Math.max(0, flockSize - 2) * .03)
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
         const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
         const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1
