@@ -87,7 +87,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       // every frame. Each opportunity waits for a fresh random interval.
       if (allowNew && matingCooldown === 0) {
         matingCooldown = between(30, 40)
-        const chance = .65
+        const chance = .75
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
         const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
         const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1
