@@ -3,6 +3,7 @@ import { createWorld } from './world'
 import { connectFlock } from './shared-flock'
 import { createSpeech } from './speech'
 import { SUPABASE_STORAGE } from './storage-mode'
+import { createFace } from './face'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <p id="copyright"><span class="wide-text">ⓒ2026. CRAPPYROOM. All rights reserved.</span></p>
@@ -106,7 +107,6 @@ snap.onclick = async () => {
   stopCamera(); loading.hidden = false
   await new Promise<void>(resolve => requestAnimationFrame(() => { setTimeout(resolve, 0) }))
   try {
-    const { createFace } = await import('./face')
     if (request !== requestId || !dialog.open) return
     // Raise the minimum and increase the previous .56 maximum by 10%.
     const face = await createFace(snapshot, .30 + Math.random() * .316)

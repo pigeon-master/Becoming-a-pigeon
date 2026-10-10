@@ -5,6 +5,7 @@ import { localFlock } from './local-flock'
 import { SERVER_STORAGE, SUPABASE_STORAGE } from './storage-mode'
 import { supabaseFlock } from './supabase-flock'
 import { rememberOwners } from './ownership'
+import { decodeFace, encodeFace } from './face'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...options, cache: 'no-store', signal: AbortSignal.timeout(20000) })
@@ -31,7 +32,6 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
       const snapshot = SUPABASE_STORAGE ? await supabaseFlock.snapshot() : SERVER_STORAGE ? await request<FlockSnapshot>('/api/pigeons') : await localFlock.snapshot()
       const pending = snapshot.birds.filter(bird => !world.has(bird.id))
       if (pending.length) {
-        const { decodeFace } = await import('./face')
         for (const bird of pending) {
           let asset: FaceAsset | null
           if (SUPABASE_STORAGE) asset = await supabaseFlock.get(bird.id)
@@ -84,7 +84,6 @@ export function connectFlock(world: ReturnType<typeof createWorld>, status: (err
       await sync()
     },
     async publish(face: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>) {
-      const { encodeFace } = await import('./face')
       const id = crypto.randomUUID()
       let token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('')
       const asset = encodeFace(face)
