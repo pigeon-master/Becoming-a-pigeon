@@ -24,7 +24,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
   heart.moveTo(0, -.5); heart.bezierCurveTo(-.9, .05, -.55, .8, 0, .35); heart.bezierCurveTo(.55, .8, .9, .05, 0, -.5)
   const heartGeometry = new THREE.ShapeGeometry(heart)
   const tip = new THREE.Vector3()
-  let matingCooldown = between(45, 60)
+  let matingCooldown = between(30, 40)
   const eligible = (bird: Pigeon) => bird.root.visible && bird.root.position.y < .05 && !bird.flightDuration && bird.settle <= 0 && !busy.has(bird)
   const reset = (bird: Pigeon) => {
     bird.root.position.y = 0; bird.torso.position.y = 0; bird.torso.rotation.x = 0
@@ -84,11 +84,10 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       for (const action of [...actions]) if (action.birds.some(bird => !birds.includes(bird) || excluded(bird))) finish(action)
       const cap = Math.min(5, Math.max(1, Math.ceil(birds.length * .22)))
       // A failed opportunity also resets the timer: never retry the probability
-      // every frame. Small flocks have longer intervals between opportunities.
+      // every frame. Each opportunity waits for a fresh random interval.
       if (allowNew && matingCooldown === 0) {
-        const flockSize = birds.filter(bird => bird.root.visible && !excluded(bird)).length
-        matingCooldown = flockSize <= 5 ? between(45, 60) : between(35, 50)
-        const chance = .5
+        matingCooldown = between(30, 40)
+        const chance = .65
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
         const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
         const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1

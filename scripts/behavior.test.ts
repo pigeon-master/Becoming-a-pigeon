@@ -83,7 +83,7 @@ test('paired behavior mounts one bird, flaps, separates and cancels both partner
 
 test('failed probability rolls leave even a nearby pair walking instead of retrying every frame', () => {
   const birds = [bird('top'), bird('bottom', 0, 3)]
-  const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => .61)
+  const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => .8)
   const starts: number[] = []
   let wasMating = false
   for (let i = 0; i < 12000; i++) {
@@ -108,7 +108,7 @@ test('a small flock cannot repeatedly mate without a long individual rest', () =
     wasMating = mating
   }
   assert.ok(starts.length > 1, 'Rare behavior remains possible')
-  assert.ok(starts[0] >= 45)
+  assert.ok(starts[0] >= 30)
   for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 108, 'Pair must finish and rest before mating again')
   controller.dispose()
 })
