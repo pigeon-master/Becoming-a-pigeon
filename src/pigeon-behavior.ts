@@ -83,11 +83,11 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       for (const bird of cooldowns.keys()) if (!birds.includes(bird)) cooldowns.delete(bird)
       for (const action of [...actions]) if (action.birds.some(bird => !birds.includes(bird) || excluded(bird))) finish(action)
       const cap = Math.min(5, Math.max(1, Math.ceil(birds.length * .22)))
-      // A failed opportunity also resets the timer: never retry the probability
-      // every frame. Each opportunity waits for a fresh random interval.
+      // An opportunity without an eligible pair also resets the timer.
+      // Each opportunity waits for a fresh random interval.
       if (allowNew && matingCooldown === 0) {
         matingCooldown = between(30, 40)
-        const chance = .75
+        const chance = 1
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
         const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
         const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1

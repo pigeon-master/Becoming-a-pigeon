@@ -81,7 +81,7 @@ test('paired behavior mounts one bird, flaps, separates and cancels both partner
   controller.dispose()
 })
 
-test('failed probability rolls leave even a nearby pair walking instead of retrying every frame', () => {
+test('an eligible nearby pair starts without probability rejection', () => {
   const birds = [bird('top'), bird('bottom', 0, 3)]
   const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => .8)
   const starts: number[] = []
@@ -92,7 +92,8 @@ test('failed probability rolls leave even a nearby pair walking instead of retry
     if (mating && !wasMating) starts.push((i + 1) * .05)
     wasMating = mating
   }
-  assert.equal(starts.length, 0)
+  assert.ok(starts.length > 0)
+  assert.ok(starts[0] >= 30)
   controller.dispose()
 })
 

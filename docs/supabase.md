@@ -35,7 +35,7 @@ git commit -m "Connect shared pigeons and speech to Supabase"
 git push origin main
 ```
 
-5. **Actions → Deploy to GitHub Pages**가 성공하면 `https://pigeon-master.github.io/Becoming-a-pigeon/`에 접속합니다. 변수만 바꿨다면 Actions에서 **Run workflow**로 다시 빌드해야 합니다. 공개 키와 URL은 빌드 때 포함되므로 재배포 전에는 반영되지 않습니다.
+5. 푸시만으로 자동 배포되지 않습니다. 배포가 필요할 때 **Actions → Deploy to GitHub Pages → Run workflow**에서 `main`을 선택해 실행합니다. 성공하면 `https://pigeon-master.github.io/Becoming-a-pigeon/`에 접속합니다. 변수만 바꿨을 때도 수동으로 다시 빌드해야 합니다. 공개 키와 URL은 빌드 때 포함되므로 재배포 전에는 반영되지 않습니다.
 
 배포 워크플로는 Supabase 모드로 빌드합니다. 두 값이 누락되거나 키 종류가 잘못되면 배포가 중단되고 설명이 로그에 표시됩니다.
 
