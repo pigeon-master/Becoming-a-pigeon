@@ -1,68 +1,21 @@
 import * as THREE from 'three'
 import type { Pigeon } from './world'
 import { findSpawn, resolveContacts } from './flock-physics'
+import { createHuman } from './human'
+import { createChihuahua } from './chihuahua'
+import { beginVisitorReturn, scheduleVisitorReturns, updateVisitorReturn } from './visitor-return'
 
 const random = (min: number, max: number) => min + Math.random() * (max - min)
 const RETURN_DELAY = 4
-
-function createPoodle() {
-  const root = new THREE.Group(), body = new THREE.Group()
-  root.scale.setScalar(1.8)
-  root.add(body)
-  const geometry = new THREE.SphereGeometry(1, 12, 8)
-  const coat = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: .95 })
-  const nose = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: .35 })
-  const puff = (parent: THREE.Object3D, position: number[], scale: number[], mat = coat) => {
-    const mesh = new THREE.Mesh(geometry, mat)
-    mesh.position.set(...position as [number, number, number]); mesh.scale.set(...scale as [number, number, number])
-    mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh)
-    return mesh
-  }
-  const curls = (parent: THREE.Object3D, position: number[], scale: number[]) => {
-    const center = new THREE.Group(); center.position.set(...position as [number, number, number]); parent.add(center)
-    puff(center, [0, 0, 0], scale)
-    for (let i = 0; i < 22; i++) {
-      const y = 1 - 2 * (i + .5) / 22, angle = i * 2.39996, radius = Math.sqrt(1 - y * y)
-      puff(center, [Math.cos(angle) * radius * scale[0], y * scale[1], Math.sin(angle) * radius * scale[2]], [.09, .09, .09])
-    }
-    return center
-  }
-  puff(body, [0, 1.05, 0], [.33, .32, .65])
-  curls(body, [0, 1.15, .42], [.38, .43, .4])
-  curls(body, [0, 1.08, -.48], [.32, .31, .29])
-  const head = curls(body, [0, 1.72, .69], [.29, .32, .3])
-  puff(head, [0, -.09, .32], [.15, .12, .26])
-  puff(head, [0, -.075, .54], [.11, .08, .075], nose)
-  const ears = [-1, 1].map(side => curls(head, [side * .26, -.18, -.01], [.13, .3, .17]))
-  const tail = new THREE.Group(); tail.position.set(0, 1.15, -.7); tail.rotation.x = -.4; body.add(tail)
-  puff(tail, [0, .19, 0], [.055, .24, .055]); curls(tail, [0, .43, 0], [.16, .16, .16])
-  const legs: THREE.Group[] = []
-  for (const z of [-.43, .43]) for (const x of [-.25, .25]) {
-    const leg = new THREE.Group(); leg.position.set(x, 1, z); body.add(leg)
-    puff(leg, [0, -.35, 0], [.065, .35, .065])
-    curls(leg, [0, -.65, 0], [.14, .16, .14])
-    puff(leg, [0, -.82, .065], [.11, .08, .18]); legs.push(leg)
-  }
-  return {
-    root,
-    animate(time: number) {
-      const stride = time * 19
-      body.position.y = Math.abs(Math.sin(stride)) * .2
-      body.rotation.x = Math.sin(stride) * .12
-      legs.forEach((leg, i) => { leg.rotation.x = Math.sin(stride + (i === 0 || i === 3 ? 0 : Math.PI)) * .85 })
-      ears.forEach((ear, i) => { ear.rotation.z = Math.sin(stride - .5) * (i ? -.25 : .25) })
-      head.rotation.x = Math.sin(stride) * .08; tail.rotation.z = Math.sin(time * 14) * .3
-    },
-    dispose() { root.removeFromParent(); geometry.dispose(); coat.dispose(); nose.dispose() },
-  }
-}
+const DOG_RUN_SPEED = 16.5
+const DOG_EXIT_SPEED = 21
 
 interface Escape {
   bird: Pigeon
   start: THREE.Vector3
   exit: THREE.Vector3
   alarmAt: number
-  source: 'dog' | 'flock' | null
+  source: 'dog' | 'flock' | 'human' | null
   triggerDistance: number
   returnAt: number
   speed: number
@@ -75,19 +28,67 @@ interface Escape {
   stage: 'calm' | 'alert' | 'fleeing' | 'waiting' | 'returning' | 'done'
 }
 
-export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveCamera, container: HTMLElement, birds: Pigeon[], interactive: () => void, finished: () => void) {
-  const dog = createPoodle(); scene.add(dog.root)
+export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveCamera, container: HTMLElement, birds: Pigeon[], interactive: () => void, finished: () => void, human = false, viewTarget = new THREE.Vector3(0, 1, 0)) {
+  const person = human ? createHuman() : undefined
+  const dog = person ?? createChihuahua(); scene.add(dog.root)
+  const phaseKey = human ? 'humanPhase' : 'poodlePhase'
   const ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
   const point = (x: number, y: number) => {
     ray.setFromCamera(new THREE.Vector2(x, y), camera)
     return ray.ray.intersectPlane(ground, new THREE.Vector3()) ?? new THREE.Vector3(0, 0, 0)
   }
   const offscreen = (margin = 1.25) => point(Math.random() < .5 ? -margin : margin, random(-.65, -.25))
-  dog.root.position.copy(offscreen(1.6))
-  let target = point(0, -.4), targetUntil = 0, dogEntered = false, deepRunDone = false
+  let target = point(0, human ? .08 : -.4), targetUntil = 0, dogEntered = false, deepRunDone = false
+  let humanFlockCenter: THREE.Vector3 | undefined
+  if(person) {
+    const flock=birds.filter(bird=>bird.root.visible)
+    const xs=flock.map(bird=>bird.root.position.x).sort((a,b)=>a-b), zs=flock.map(bird=>bird.root.position.z).sort((a,b)=>a-b)
+    const median=new THREE.Vector3(xs[Math.floor(xs.length/2)]??viewTarget.x,0,zs[Math.floor(zs.length/2)]??viewTarget.z)
+    const core=[...flock].sort((a,b)=>a.root.position.distanceToSquared(median)-b.root.position.distanceToSquared(median)).slice(0,Math.ceil(flock.length*.8))
+    humanFlockCenter=core.length?core.reduce((sum,bird)=>sum.add(bird.root.position),new THREE.Vector3()).divideScalar(core.length).setY(0):median
+    const away=humanFlockCenter.clone().sub(camera.position).setY(0).normalize()
+    if(away.lengthSq()<.01)away.set(0,0,-1)
+    const side=new THREE.Vector3(-away.z,0,away.x)
+    const central=Math.random()<.65
+    // Stay in or just behind the flock, facing it with the face toward the viewer.
+    target=humanFlockCenter.clone().addScaledVector(away,central?random(.25,1.1):random(1.1,2.6)).addScaledVector(side,central?random(-.7,.7):random(-1.4,1.4))
+  }
+  const humanCameraFrom=camera.position.clone(), humanCameraTo=camera.position.clone()
+  let humanZoom=false
+  if(person) {
+    const bounds=new THREE.Box3()
+    for(const pose of [0,1]) {
+      person.animate(0,pose,false);person.root.updateMatrixWorld(true)
+      bounds.union(new THREE.Box3().setFromObject(person.root))
+    }
+    person.animate(0,0,false)
+    const points: THREE.Vector3[]=[]
+    for(const x of [bounds.min.x,bounds.max.x])for(const y of [bounds.min.y,bounds.max.y])for(const z of [bounds.min.z,bounds.max.z])points.push(new THREE.Vector3(x,y,z).add(target))
+    const view=camera.clone(), direction=humanCameraFrom.clone().sub(viewTarget).normalize()
+    const fits=(distance: number)=>{
+      view.position.copy(viewTarget).addScaledVector(direction,distance);view.lookAt(viewTarget);view.updateMatrixWorld(true)
+      return points.every(point=>{const p=point.clone().project(view);return p.z>-1&&p.z<1&&Math.abs(p.x)<.93&&Math.abs(p.y)<.93})
+    }
+    const original=humanCameraFrom.distanceTo(viewTarget)
+    if(!fits(original)) {
+      let low=original,high=original
+      for(let i=0;i<60&&!fits(high);i++)high*=1.15
+      for(let i=0;i<24;i++){const middle=(low+high)/2;if(fits(middle))high=middle;else low=middle}
+      humanCameraTo.copy(viewTarget).addScaledVector(direction,high);humanZoom=true
+    }
+    // Spawn against the fitted view, while retaining the original standing location.
+    const originalPosition=camera.position.clone()
+    camera.position.copy(humanCameraTo);camera.lookAt(viewTarget);camera.updateMatrixWorld(true)
+    dog.root.position.copy(offscreen(1.6))
+    camera.position.copy(originalPosition);camera.lookAt(viewTarget);camera.updateMatrixWorld(true)
+  } else dog.root.position.copy(offscreen(1.6))
+  let humanTravelled = 0
+  let poseStarted: number | undefined, poseHeading = 0, gestured = false
+  const yielded = new Map<string, number>()
   const entries = new Map<string, Escape>()
   const firstUpward = Math.random() < .5
   let elapsed = 0, departedAt: number | undefined, exitStarted: number | undefined, disposed = false, unlocked = false
+  let dogExitStage: 'center' | 'front' = 'center', dogFrontAt: number | undefined
   const distance = (a: THREE.Vector3, b: THREE.Vector3) => Math.hypot(a.x - b.x, a.z - b.z)
   const inFrame = (position: THREE.Vector3, margin = 1) => {
     const projected = position.clone().add(new THREE.Vector3(0, .8, 0)).project(camera)
@@ -101,7 +102,7 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
   const initialEntries = [...entries.values()]
   if (initialEntries[0]) initialEntries[0].upward = firstUpward
   if (initialEntries[1]) initialEntries[1].upward = !firstUpward
-  const alarm = (entry: Escape, source: 'dog' | 'flock', separation: number) => {
+  const alarm = (entry: Escape, source: 'dog' | 'flock' | 'human', separation: number) => {
     entry.stage = 'alert'; entry.source = source; entry.triggerDistance = separation
     entry.alarmAt = elapsed + (source === 'dog' ? random(.03, .1) : random(.1, .25))
   }
@@ -119,19 +120,9 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
     entry.stage = 'done'
   }
   const scheduleReturns = () => {
-    const shuffled = [...entries.values()].filter(e => e.stage !== 'done')
-    for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]] }
-    let batchAt = departedAt! + RETURN_DELAY
-    const firstFlies = Math.random() < .5
-    shuffled.forEach((entry, i) => {
-      // Some share the same arrival time; others follow in short, uneven waves.
-      if (i > 0 && Math.random() < .5) batchAt += random(.2, .65)
-      entry.returnAt = batchAt
-      entry.returnMode = (i < 2 ? (i === 0 ? firstFlies : !firstFlies) : Math.random() < .5) ? 'fly' : 'walk'
-      entry.returnSpeed = entry.returnMode === 'fly' ? random(5, 8) : random(2.2, 3.4)
-    })
+    scheduleVisitorReturns([...entries.values()].filter(e => e.stage !== 'done'), departedAt!, RETURN_DELAY)
   }
-  container.dataset.poodlePhase = 'running'
+  container.dataset[phaseKey] = human ? 'entering' : 'running'
   return {
     owns(id: string) { const stage = entries.get(id)?.stage; return !!stage && stage !== 'calm' && stage !== 'done' },
     release(id: string) {
@@ -142,12 +133,78 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
     },
     update(dt: number) {
       elapsed += dt
+      if(person&&humanZoom&&!unlocked) {
+        if(departedAt===undefined)camera.position.lerpVectors(humanCameraFrom,humanCameraTo,THREE.MathUtils.smoothstep(elapsed,0,.65))
+        else camera.position.lerpVectors(humanCameraTo,humanCameraFrom,THREE.MathUtils.smoothstep(elapsed-departedAt,0,.65))
+        camera.lookAt(viewTarget);camera.updateMatrixWorld(true)
+      }
       for (const bird of birds) if (!entries.has(bird.id)) enroll(bird)
       for (const [id] of entries) if (!birds.some(bird => bird.id === id)) entries.delete(id)
-      if (departedAt === undefined) {
+      if (departedAt === undefined && person) {
+        const position = person.root.position
+        if (poseStarted === undefined || exitStarted !== undefined) {
+          const heading = target.clone().sub(position).setY(0)
+          let alignment = 1
+          if (heading.lengthSq() > .01) {
+            const desired = Math.atan2(heading.x, heading.z)
+            if (humanTravelled === 0) person.root.rotation.y = desired
+            const turn = desired - person.root.rotation.y
+            person.root.rotation.y += Math.atan2(Math.sin(turn), Math.cos(turn)) * Math.min(1, dt * 10)
+            alignment = Math.max(0, Math.cos(desired - person.root.rotation.y))
+          }
+          const step = Math.min(heading.length(), dt * 6.2 * alignment)
+          position.addScaledVector(heading.clone().normalize(), step)
+          humanTravelled += step
+          person.animate(elapsed, 0, true, humanTravelled)
+          if (exitStarted === undefined && distance(position, target) < .15) {
+            poseStarted = elapsed
+            const flock = birds.filter(bird => bird.root.visible)
+            const center = flock.length ? flock.reduce((sum, bird) => sum.add(bird.root.position), new THREE.Vector3()).divideScalar(flock.length) : point(0, -.4)
+            const direction = center.sub(position).setY(0)
+            if (direction.lengthSq() < .01 && flock.length) direction.copy(flock[0].root.position).sub(position).setY(0)
+            const towardCamera = camera.position.clone().sub(position).setY(0)
+            const cameraHeading = Math.atan2(towardCamera.x, towardCamera.z)
+            const flockHeading = direction.lengthSq() > .01 ? Math.atan2(direction.x, direction.z) : cameraHeading
+            const flockAngle = Math.atan2(Math.sin(flockHeading - cameraHeading), Math.cos(flockHeading - cameraHeading))
+            // Vary front and three-quarter views, without ever turning the face away.
+            const variation = Math.random() < .5 ? random(-20, 20) : (Math.random() < .5 ? -1 : 1) * random(35, 55)
+            const angle = THREE.MathUtils.clamp(THREE.MathUtils.clamp(flockAngle, -Math.PI / 3, Math.PI / 3) * .25 + THREE.MathUtils.degToRad(variation), -Math.PI / 3, Math.PI / 3)
+            poseHeading = cameraHeading + angle
+            container.dispatchEvent(new CustomEvent('humanstanding', { detail: { time: elapsed, heading: poseHeading, position:position.toArray(),flockDistance:humanFlockCenter?position.distanceTo(humanFlockCenter):0 } }))
+          }
+          if (exitStarted !== undefined && !inFrame(position, 1.5)) {
+            departedAt = elapsed; person.root.visible = false; scheduleReturns()
+          }
+        } else {
+          const poseAge = elapsed - poseStarted
+          person.root.rotation.y += Math.atan2(Math.sin(poseHeading - person.root.rotation.y), Math.cos(poseHeading - person.root.rotation.y)) * Math.min(1, dt * 6)
+          person.animate(elapsed, THREE.MathUtils.smoothstep(poseAge - 2, 0, .2), false)
+          if (!gestured && poseAge >= 2.2) {
+            gestured = true
+            container.dispatchEvent(new Event('humangesture'))
+            for (const entry of entries.values()) if (entry.stage === 'calm') alarm(entry, 'human', distance(entry.bird.root.position, position))
+          }
+          if (poseAge > 4.8 && [...entries.values()].every(entry => entry.stage === 'waiting' || entry.stage === 'done')) {
+            exitStarted = elapsed; target = offscreen(1.8)
+          }
+        }
+        for (const entry of entries.values()) if (entry.stage === 'calm') {
+          // Walking past is not an alarm. Suppress spontaneous flights during the approach.
+          const bird = entry.bird; bird.timer = Math.max(bird.timer, 1)
+          if (gestured) { alarm(entry, 'human', distance(bird.root.position, position)); continue }
+          if (distance(bird.root.position, position) < 3.5 && elapsed >= (yielded.get(bird.id) ?? 0)) {
+            const away = bird.root.position.clone().sub(position).setY(0)
+            if (away.lengthSq() < .01) away.set(1, 0, 0)
+            bird.target.copy(bird.root.position).addScaledVector(away.normalize(), 3.5); bird.target.y = 0
+            bird.timer = 4; yielded.set(bird.id, elapsed + 1.5)
+            container.dispatchEvent(new CustomEvent('pigeonyielded', { detail: { id: bird.id } }))
+          }
+        }
+      }
+      if (departedAt === undefined && !person) {
         const calm = [...entries.values()].filter(entry => entry.stage === 'calm')
         if (exitStarted === undefined && elapsed > 3.8 && deepRunDone && elapsed >= targetUntil && [...entries.values()].every(entry => entry.stage === 'waiting' || entry.stage === 'done')) {
-          exitStarted = elapsed; target = offscreen(1.8)
+          exitStarted = elapsed; target = point(0, -.35)
         }
         if (exitStarted === undefined && elapsed >= targetUntil) {
           const nearest = calm.sort((a, b) => distance(a.bird.root.position, dog.root.position) - distance(b.bird.root.position, dog.root.position))[0]
@@ -156,20 +213,28 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
             const center = point(random(-.35, .35), -.25)
             const inward = center.clone().sub(camera.position).setY(0).normalize()
             target = center.addScaledVector(inward, random(5, 8))
-            targetUntil = elapsed + THREE.MathUtils.clamp(distance(dog.root.position, target) / 10.35 + .15, 1, 2.4)
+            targetUntil = elapsed + THREE.MathUtils.clamp(distance(dog.root.position, target) / DOG_RUN_SPEED + .15, .65, 1.5)
             deepRunDone = true
           } else {
             target = !dogEntered ? point(0, -.4) : nearest ? nearest.bird.root.position.clone().setY(0).add(new THREE.Vector3(random(-1.2, 1.2), 0, random(-1.2, 1.2))) : point(random(-.75, .75), random(-.65, .05))
             targetUntil = elapsed + random(.4, .75)
           }
         }
+        if (exitStarted !== undefined && dogExitStage === 'center' && distance(dog.root.position, target) < .3) {
+          dogExitStage = 'front'
+          target = camera.position.clone().setY(0)
+        }
         const heading = target.clone().sub(dog.root.position).setY(0)
-        const speed = exitStarted === undefined ? 10.35 : 13.8
+        const speed = exitStarted === undefined ? DOG_RUN_SPEED : DOG_EXIT_SPEED
         dog.root.position.addScaledVector(heading.clone().normalize(), Math.min(heading.length(), speed * dt))
         if (heading.lengthSq() > .01) dog.root.rotation.y = Math.atan2(heading.x, heading.z)
         dog.animate(elapsed)
         dogEntered ||= inFrame(dog.root.position, .95)
-        if (exitStarted !== undefined && (distance(dog.root.position, target) < .2 || (!inFrame(dog.root.position, 1.3) && elapsed - exitStarted > .4))) {
+        if (exitStarted !== undefined && dogExitStage === 'front' && dogFrontAt === undefined && inFrame(dog.root.position)) {
+          dogFrontAt = elapsed
+          container.dispatchEvent(new CustomEvent('chihuahuafront', { detail: { time: elapsed, heading: dog.root.rotation.y } }))
+        }
+        if (exitStarted !== undefined && dogExitStage === 'front' && (distance(dog.root.position, target) < .2 || (!inFrame(dog.root.position, 1.3) && elapsed - (dogFrontAt ?? exitStarted) > .2))) {
           departedAt = elapsed; dog.root.visible = false; scheduleReturns()
         }
         // Only actual takeoffs spread the alarm, never still-waiting neighbors.
@@ -181,10 +246,7 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
           else if (dogEntered && nearDog < 5.94) alarm(entry, 'dog', nearDog)
         }
       }
-      if (departedAt !== undefined && elapsed >= departedAt + RETURN_DELAY && !unlocked) {
-        unlocked = true; interactive()
-      }
-      container.dataset.poodlePhase = departedAt === undefined ? 'running' : elapsed < departedAt + RETURN_DELAY ? 'waiting' : 'returning'
+      container.dataset[phaseKey] = departedAt === undefined ? (person ? exitStarted !== undefined ? 'leaving' : poseStarted !== undefined ? elapsed - poseStarted < 2 ? 'standing' : 'gesture' : 'entering' : 'running') : elapsed < departedAt + RETURN_DELAY ? 'waiting' : 'returning'
       for (const entry of entries.values()) {
         const { bird } = entry
         if (entry.stage === 'alert' && elapsed >= entry.alarmAt) {
@@ -195,7 +257,7 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
             for (let i = 0; i < 100 && entry.exit.clone().project(camera).y < 1.4; i++) entry.exit.y += 1
           }
           bird.velocity.set(0, 0, 0); bird.flightDuration = 0; entry.stage = 'fleeing'
-          container.dispatchEvent(new CustomEvent('pigeonstartled', { detail: { id: bird.id, source: entry.source, distance: entry.triggerDistance, time: elapsed, dogVisible: dog.root.visible, upward: entry.upward } }))
+          container.dispatchEvent(new CustomEvent('pigeonstartled', { detail: { id: bird.id, source: entry.source, distance: entry.triggerDistance, time: elapsed, dogVisible: !human && dog.root.visible, humanVisible: human && dog.root.visible, upward: entry.upward } }))
         }
         if (entry.stage === 'fleeing') {
           const t = THREE.MathUtils.clamp((elapsed - entry.alarmAt) / 1.5, 0, 1)
@@ -208,30 +270,19 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
         }
         if (entry.stage === 'waiting' && elapsed >= entry.returnAt) {
           const occupied = [...entries.values()].filter(e => e !== entry && (e.stage === 'returning' || e.stage === 'done')).map(e => ({ ...e.bird.physics, position: e.stage === 'returning' ? e.bird.target : e.bird.root.position }))
-          const destination = findSpawn(occupied)
-          if (!destination) continue
-          bird.root.position.copy(offscreen()); bird.root.visible = true
-          bird.target.copy(destination); bird.settle = 0; bird.timer = 1000; bird.speed = entry.returnSpeed
-          entry.landing.copy(destination); entry.returnStart = elapsed
-          entry.start.copy(bird.root.position)
-          entry.returnDuration = THREE.MathUtils.clamp(distance(entry.start, destination) / entry.returnSpeed, 1, 3.5)
-          bird.root.rotation.y = Math.atan2(destination.x - bird.root.position.x, destination.z - bird.root.position.z)
+          if (!beginVisitorReturn(entry, elapsed, offscreen(), occupied)) continue
           entry.stage = 'returning'
           container.dispatchEvent(new CustomEvent('pigeonreturning', { detail: { id: bird.id, mode: entry.returnMode, speed: entry.returnSpeed, time: elapsed } }))
         }
         if (entry.stage === 'returning') {
-          if (entry.returnMode === 'fly') {
-            const t = Math.min(1, (elapsed - entry.returnStart) / entry.returnDuration)
-            bird.root.position.lerpVectors(entry.start, entry.landing, t)
-            bird.root.position.y = Math.sin(t * Math.PI) * 2 + (1 - t) * 1.1
-            poseFlight(bird)
-            if (t === 1) restore(entry)
-          } else {
-            const neighbors = birds.filter(b => b.root.visible && b !== bird).map(b => b.physics)
-            bird.update(dt, elapsed, bird.physics, neighbors)
-            if (inFrame(bird.root.position, .85) || bird.root.position.distanceTo(bird.target) < .45 || elapsed - entry.returnStart > 9) restore(entry)
-          }
+          const neighbors = birds.filter(b => b.root.visible && b !== bird).map(b => b.physics)
+          if (updateVisitorReturn(entry, dt, elapsed, neighbors, inFrame)) restore(entry)
         }
+      }
+      if (departedAt !== undefined && elapsed >= departedAt + RETURN_DELAY && !unlocked) {
+        const flock = [...entries.values()]
+        const returned = flock.filter(entry => entry.stage === 'done').length
+        if (returned >= Math.ceil(flock.length * .75)) { unlocked = true; interactive() }
       }
       resolveContacts(birds.filter(b => b.root.visible).map(b => b.physics))
       container.dataset.poodleVisibleBirds = String(birds.filter(b => b.root.visible).length)
@@ -240,11 +291,12 @@ export function createPoodleVisit(scene: THREE.Scene, camera: THREE.PerspectiveC
     dispose() {
       if (disposed) return
       disposed = true; dog.dispose()
+      if(person&&humanZoom&&!unlocked){camera.position.copy(humanCameraFrom);camera.lookAt(viewTarget)}
       for (const entry of entries.values()) {
         if (!birds.includes(entry.bird) || entry.stage === 'done') continue
         restore(entry)
       }
-      container.dataset.poodlePhase = 'idle'; delete container.dataset.poodleVisibleBirds; finished()
+      container.dataset[phaseKey] = 'idle'; delete container.dataset.poodleVisibleBirds; finished()
     },
   }
 }

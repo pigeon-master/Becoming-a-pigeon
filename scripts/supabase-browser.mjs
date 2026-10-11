@@ -13,8 +13,11 @@ const root = await mkdtemp(resolve(tmpdir(), 'pigeon-supabase-browser-'))
 const source = file => JSON.stringify(resolve('src', file).replaceAll('\\', '/'))
 let browser, server
 try {
-  await writeFile(resolve(root, 'index.html'), '<body><button id="speak" hidden>Wanna Say Something?</button><button id="remove-pigeon" hidden>Remove</button><section id="speech-panel" hidden><input id="speech-input"><output id="speech-count"></output><button id="speech-close">Close</button><p id="speech-error" hidden></p></section><script type="module" src="/fixture.ts"></script>')
+  const styles=await readFile(resolve('src/style.css'),'utf8')
+  await writeFile(resolve(root,'fixture.css'), styles.match(/#action-bar\{[^}]+\}/)[0]+'\n'+styles.match(/#action-bar\[data-participation="empty"\]\{[^}]+\}/)[0])
+  await writeFile(resolve(root, 'index.html'), '<body><div id="action-bar" data-participation="loading"><button id="join">Become a Pigeon</button><button id="speak" hidden>Wanna Say Something?</button></div><button id="remove-pigeon" hidden>Remove</button><section id="speech-panel" hidden><input id="speech-input"><output id="speech-count"></output><button id="speech-close" aria-label="Save">↑</button><p id="speech-error" hidden></p></section><button id="outside">Outside</button><script type="module" src="/fixture.ts"></script>')
   await writeFile(resolve(root, 'fixture.ts'), `
+    import './fixture.css';
     import * as THREE from 'three';
     import {connectFlock} from ${source('shared-flock.ts')};
     import {createSpeech} from ${source('speech.ts')};
@@ -47,7 +50,7 @@ try {
   await new Promise(done => server.listen(0, '127.0.0.1', done))
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   const rows = new Map(), errors = []
-  let sequence = 0, failedSave = false
+  let sequence = 0, failedSave = false, delaySnapshot = false
   async function visitor() {
     const context = await browser.newContext()
     const user = randomUUID()
@@ -72,6 +75,7 @@ try {
         } else if (id) data = row ? { asset: row.asset } : null
         else data = [...rows.values()].map(({ asset, ...metadata }) => metadata)
       }
+      if(delaySnapshot&&request.method()==='GET'&&!url.searchParams.has('id'))await new Promise(done=>setTimeout(done,800))
       await route.fulfill({ status, json: data })
     })
     const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message))
@@ -80,6 +84,7 @@ try {
     return page
   }
   const alice = await visitor(), bob = await visitor()
+  await bob.waitForFunction(()=>document.getElementById('action-bar').dataset.participation==='empty')
   const owner = await alice.evaluate(() => window.capture())
   await alice.locator('#speak').click()
   await alice.locator('#speech-input').fill('Hello 한글')
@@ -93,22 +98,64 @@ try {
   assert.equal(await bob.evaluate(async owner => { try { await window.shared.say(owner, 'hacked'); return false } catch { return true } }, owner), true)
   assert.equal(await bob.evaluate(async owner => { try { await window.shared.remove(owner); return false } catch { return true } }, owner), true)
   const submitted = rows.get(owner.id).message
-  await alice.reload(); await alice.locator('#speak').waitFor()
+  delaySnapshot=true
+  await alice.reload()
+  await alice.waitForFunction(()=>document.getElementById('action-bar').dataset.participation==='loading')
+  assert.ok(await alice.locator('#action-bar').evaluate(bar=>bar.getBoundingClientRect().top>innerHeight*.6),'Existing users keep the action bar at the bottom while ownership loads')
+  await alice.locator('#speak').waitFor();delaySnapshot=false
+  assert.equal(await alice.locator('#action-bar').getAttribute('data-participation'),'owned')
   assert.equal(await alice.evaluate(id => window.words.get(id), owner.id), submitted)
+  const ime = await alice.context().newCDPSession(alice)
+  // The arrow submits, while clicks within the input panel leave the draft open.
+  await alice.locator('#speak').click()
+  await alice.locator('#speech-input').fill('Arrow submitted')
+  await alice.locator('#speech-count').click()
+  assert.equal(await alice.locator('#speech-panel').isVisible(), true)
+  assert.equal(rows.get(owner.id).message, submitted)
+  await alice.locator('#speech-input').focus()
+  await ime.send('Input.imeSetComposition', { text: '한글', selectionStart: 2, selectionEnd: 2 })
+  let saved = alice.waitForResponse(response => response.request().method() === 'PATCH' && response.ok())
+  await alice.locator('#speech-close').click()
+  await saved
+  await alice.locator('#speech-panel').waitFor({ state: 'hidden' })
+  assert.match(rows.get(owner.id).message, /Arrow/)
+  assert.equal(rows.get(owner.id).message.match(/한글/g)?.length, 1)
+  // A real native Hangul composition must finish once when clicking outside.
+  await alice.locator('#speak').click()
+  await alice.locator('#speech-input').fill('Outside ')
+  await ime.send('Input.imeSetComposition', { text: '한글', selectionStart: 2, selectionEnd: 2 })
+  saved = alice.waitForResponse(response => response.request().method() === 'PATCH' && response.ok())
+  await alice.locator('#outside').click()
+  await saved
+  await alice.locator('#speech-panel').waitFor({ state: 'hidden' })
+  assert.equal(rows.get(owner.id).message.match(/한글/g)?.length, 1)
+  assert.ok(rows.get(owner.id).message.replace(/[9.]/g, '').endsWith('한글'))
+  assert.equal(await alice.evaluate(() => document.activeElement.id), 'outside')
+  // Enter must still submit an active native composition with just one keypress.
+  await alice.locator('#speak').click()
+  await alice.locator('#speech-input').fill('Enter ')
+  await ime.send('Input.imeSetComposition', { text: '한글', selectionStart: 2, selectionEnd: 2 })
+  saved = alice.waitForResponse(response => response.request().method() === 'PATCH' && response.ok())
+  await alice.locator('#speech-input').press('Enter')
+  await saved
+  await alice.locator('#speech-panel').waitFor({ state: 'hidden' })
+  assert.equal(rows.get(owner.id).message.match(/한글/g)?.length, 1)
+  await ime.detach()
+  const beforeFailure = rows.get(owner.id).message
   // Failed submission must keep the editable text and make the error visible.
   failedSave = true
   await alice.locator('#speak').click(); await alice.locator('#speech-input').fill('Retry 한글')
   await alice.locator('#speech-input').press('Enter')
   await alice.locator('#speech-error').waitFor()
   assert.equal(await alice.locator('#speech-panel').isVisible(), true)
-  assert.equal(rows.get(owner.id).message, submitted)
+  assert.equal(rows.get(owner.id).message, beforeFailure)
   failedSave = false
   await alice.locator('#speech-input').press('Enter')
   await alice.locator('#speech-panel').waitFor({ state: 'hidden' })
   await alice.waitForFunction(() => document.getElementById('speech-error').hidden)
   assert.match(rows.get(owner.id).message, /Retry/)
   assert.deepEqual(errors, [])
-  console.log('PASS: anonymous ownership, Enter saves, other visitor reads, unauthorized writes fail, reload and failed-save retry.')
+  console.log('PASS: ownership, Enter/arrow/outside saves, native Hangul completion, public reads, reload and failed-save retry.')
 } finally {
   await browser?.close()
   if (server) await new Promise(done => server.close(done))

@@ -5,8 +5,10 @@ import type { FlockSnapshot, PigeonOwner } from './pigeon-data'
 import { readOwners, rememberOwners } from './ownership'
 import { SUPABASE_STORAGE } from './storage-mode'
 
-export function createSpeech(shared: ReturnType<typeof connectFlock>) {
+export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeon?: (id: string) => void) {
   const button = document.getElementById('speak') as HTMLButtonElement
+  const actionBar = document.getElementById('action-bar')
+  if (actionBar) actionBar.dataset.participation = 'loading'
   const removeButton = document.getElementById('remove-pigeon') as HTMLButtonElement
   const panel = document.getElementById('speech-panel')!
   const input = document.getElementById('speech-input') as HTMLInputElement
@@ -18,6 +20,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
   let resumeNoise = false
   let noiseProgress = 0, noiseInterval = 7 + Math.floor(Math.random() * 4), noiseDue = false
   let submitPending = false
+  let focusAfterSubmit = false
   let enterHeld = false
   let compositionTimer: ReturnType<typeof setTimeout>, saveTimer: ReturnType<typeof setTimeout>, submitTimer: ReturnType<typeof setTimeout>
   let saves = Promise.resolve()
@@ -46,7 +49,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
   }
   const changed = () => {
     count(); dirty = true
-    if (owner) shared.previewSpeech(owner.id, input.value, automaticIndices(chars))
+    if (owner) { shared.previewSpeech(owner.id, input.value, automaticIndices(chars)); focusPigeon?.(owner.id) }
     clearTimeout(saveTimer)
     // Supabase publishes submitted text; typing remains a preview in this browser.
     if (!SUPABASE_STORAGE) saveTimer = setTimeout(persist, 650)
@@ -113,7 +116,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
     }, 0)
   })
   input.addEventListener('input', event => { if (!composing && !endingComposition && !(event as InputEvent).isComposing) commitInput((event as InputEvent).inputType) })
-  const close = () => { panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
+  const finishClose = () => { panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
   const scheduleSubmit = () => {
     clearTimeout(submitTimer)
     submitTimer = setTimeout(() => {
@@ -123,39 +126,51 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
       if (composing) { input.blur(); return }
       clearTimeout(compositionTimer); endingComposition = false
       commitInput('insertFromComposition'); submitPending = false
-      close(); button.focus()
+      finishClose()
+      if (focusAfterSubmit) button.focus()
+      focusAfterSubmit = false
     }, 0)
   }
+  const submit = (returnFocus = false) => {
+    submitPending = true; focusAfterSubmit = returnFocus; scheduleSubmit()
+  }
+  const close = () => { if (panel.hidden) persist(); else submit() }
   button.onclick = () => {
     if (!owner) return
-    panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden))
-    if (!panel.hidden) { count(); input.focus() } else close()
+    if (!panel.hidden) { submit(true); return }
+    focusPigeon?.(owner.id)
+    panel.hidden = false; button.setAttribute('aria-expanded', 'true'); count(); input.focus()
   }
-  document.getElementById('speech-close')!.onclick = close
+  document.getElementById('speech-close')!.onclick = () => submit(true)
+  document.addEventListener('click', event => {
+    const target = event.target
+    if (!panel.hidden && target instanceof Node && !panel.contains(target) && !button.contains(target)) close()
+  })
   input.addEventListener('blur', () => { if (!SUPABASE_STORAGE) persist() })
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter') {
       if (!event.isComposing && !composing && event.keyCode !== 229) event.preventDefault()
-      enterHeld = true; submitPending = true; return
+      enterHeld = true; submitPending = true; focusAfterSubmit = true; return
     }
     if (event.isComposing || composing || endingComposition || event.keyCode === 229) return
-    if (event.key === 'Escape') { event.preventDefault(); close(); button.focus() }
+    if (event.key === 'Escape') { event.preventDefault(); submit(true) }
   })
   input.addEventListener('keyup', event => {
     if (event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter') {
       enterHeld = false
-      if (!panel.hidden) { submitPending = true; scheduleSubmit() }
+      if (!panel.hidden) submit(true)
     }
   })
   return {
     close,
     get owner() { return owner ? { ...owner } : undefined },
     setOwner(next: PigeonOwner) {
-      close(); clearTimeout(compositionTimer); composing = false; endingComposition = false
+      finishClose(); clearTimeout(compositionTimer); composing = false; endingComposition = false
       clearTimeout(submitTimer); submitPending = false; enterHeld = false; noiseProgress = 0; noiseDue = false
       owner = next; chars = []; input.value = ''; dirty = false; lastSaved = ''; error.hidden = true; resumeNoise = false
       rememberOwners([next])
       button.hidden = false; removeButton.hidden = false; count()
+      if (actionBar) actionBar.dataset.participation = 'owned'
     },
     refresh(snapshot: FlockSnapshot) {
       const owned = readOwners()
@@ -172,6 +187,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>) {
         count()
       }
       button.hidden = !next; removeButton.hidden = !next
+      if (actionBar) actionBar.dataset.participation = next ? 'owned' : 'empty'
       if (!bird) return
       if (!dirty && !composing && !endingComposition && panel.hidden) { chars = restoreSpeech(bird.message, bird.automatic); input.value = speechValue(chars); lastSaved = input.value; count() }
     },

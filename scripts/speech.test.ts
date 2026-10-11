@@ -18,7 +18,9 @@ test('random interruptions respect 50 characters, keep Hangul and never exceed f
       assert.equal(humanCount(result.chars), humanCount(original))
       assert.ok(humanCount(result.chars) <= 50)
       assert.ok(!/9{5}/.test(value))
-      assert.ok(/9/.test(value) && /\./.test(value))
+      assert.ok(/9/.test(value))
+      assert.ok(result.chars.filter(c => c.automatic).every(c => c.char === '9' || c.char === '.'))
+      for (const dots of value.match(/\.+/g) ?? []) assert.equal(dots.length, 2)
       assert.ok(result.cursor >= 0 && result.cursor <= value.length)
       assert.ok(validSpeech(value, automaticIndices(result.chars)))
     }
@@ -41,18 +43,31 @@ test('all 50 user characters survive noise and restore with the same count', () 
   assert.equal(blocked.cursor, 25)
 })
 
-test('generated dot groups contain exactly two dots, including near the noise limit', () => {
+test('new noise uses groups of exactly two dots, including near the noise limit', () => {
   for (let room = 1; room <= 75; room++) {
     for (const random of [() => 0, () => .5, () => .999]) {
       const previous = [...Array.from({ length: 75 - room }, () => ({ char: '.', automatic: true })), { char: 'a', automatic: false }]
       const result = addNoise(previous, previous.length, random)
       const added = speechValue(result.chars).slice(previous.length)
       assert.ok(added.includes('9'))
-      for (const group of added.match(/\.+/g) ?? []) assert.equal(group.length, 2)
+      assert.match(added, /^(?:\.\.)?9{1,4}(?:\.\.)?$/)
       assert.ok(automaticIndices(result.chars).length <= 75)
       assert.equal(humanCount(result.chars), 1)
     }
   }
+})
+test('noise next to existing nines preserves user digits and limits consecutive nines', () => {
+  for (let cursor = 0; cursor <= 4; cursor++) {
+    const previous = editSpeech([], '9999', 4).chars
+    const result = addNoise(previous, cursor, () => .999)
+    assert.ok(!/9{5}/.test(speechValue(result.chars)))
+    assert.equal(humanCount(result.chars), 4)
+    assert.ok(result.cursor >= cursor && result.cursor <= speechValue(result.chars).length)
+  }
+  const previous = editSpeech([], 'a99', 3).chars
+  const result = addNoise(previous, 3, () => .999)
+  assert.equal(speechValue(result.chars), 'a99..9999..')
+  assert.equal(humanCount(result.chars), 3)
 })
 test('noise is inserted only at the newly typed caret and preserves the earlier prefix', () => {
   const previous = editSpeech([], '앞 문장 NEW 뒤 문장', 8).chars

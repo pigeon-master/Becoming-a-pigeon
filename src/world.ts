@@ -3,6 +3,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { findSpawn, PIGEON_RADIUS, resolveContacts, steerAround } from './flock-physics'
 import type { FlockBody } from './flock-physics'
 import { createPoodleVisit } from './poodle'
+import { loadHumanPhotos } from './human'
+import { loadChihuahuaPhotos } from './chihuahua'
+import { loadCarPhotos } from './compact-car'
+import { createCarVisit } from './car-visit'
 import { createPigeonBehaviors } from './pigeon-behavior'
 
 const rand = (a: number, i: number) => a + Math.random() * (i - a)
@@ -163,11 +167,14 @@ export function createWorld(container: HTMLElement) {
   const camera = new THREE.PerspectiveCamera(48, 1, .1, 4000)
   camera.position.set(0, 4, 14)
   const controls = new OrbitControls(camera, renderer.domElement)
-  controls.target.set(0, 1, 0); controls.enableDamping = true; controls.minDistance = 4; controls.maxDistance = 28
-  const bubbleHideDistance = 21, bubbleShowDistance = 19
+  controls.target.set(0, 1, 0); controls.enableDamping = false; controls.minDistance = 4; controls.maxDistance = 28
+  const bubbleHideDistance = 23, bubbleShowDistance = 21
   let bubblesVisibleAtZoom = true
   let followFlock = false
-  controls.addEventListener('start', () => { followFlock = true })
+  let viewInteracting = false
+  let wheelDistance: number | undefined
+  let speechFocus: { id: string; start: number; from: THREE.Vector3; targetFrom: THREE.Vector3; targetTo: THREE.Vector3; cameraTo: THREE.Vector3 } | undefined
+  controls.zoomToCursor = false
   controls.maxPolarAngle = Math.PI / 2.08; controls.minPolarAngle = .3; controls.enablePan = false
   scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x747460, 2.4))
   const sun = new THREE.DirectionalLight(0xfff0d1, 3.2); sun.position.set(-90, 180, 90); sun.castShadow = true
@@ -181,37 +188,67 @@ export function createWorld(container: HTMLElement) {
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground)
   const birds: Pigeon[] = []
   const behaviors = createPigeonBehaviors(scene, birds)
-  let visit: ReturnType<typeof createPoodleVisit> | undefined
-  const releasePoodle = () => {
+  let visit: ReturnType<typeof createPoodleVisit> | ReturnType<typeof createCarVisit> | undefined
+  const releaseCar = async () => {
+    if (visit || removing.size) return
+    await loadCarPhotos()
+    if (visit || removing.size) return
+    behaviors.cancel(); controls.enabled = false
+    const maxDistance=controls.maxDistance;controls.maxDistance=1000
+    return new Promise<void>(resolve => {
+      visit = createCarVisit(scene, camera, container, birds, () => {
+        visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new Event('poodleend'))
+      },controls.target)
+    })
+  }
+  const releasePoodle = async (human = false) => {
     if (visit || removing.size) return Promise.resolve()
+    if (human) await loadHumanPhotos()
+    else await loadChihuahuaPhotos()
+    if (visit || removing.size) return
     behaviors.cancel()
     controls.enabled = false
+    const maxDistance=controls.maxDistance
+    if(human)controls.maxDistance=1000
     return new Promise<void>(resolve => {
       visit = createPoodleVisit(scene, camera, container, birds,
-        () => { controls.enabled = true; resolve() },
-        () => { visit = undefined; controls.enabled = true; resolve(); container.dispatchEvent(new Event('poodleend')) })
+        () => { controls.maxDistance=maxDistance;controls.enabled = true; resolve() },
+        () => { visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new Event('poodleend')) }, human,controls.target)
     })
   }
   const removing = new Set<string>()
   const removals = new Map<string, Promise<void>>()
   const effects = new Set<(now: number) => void>()
   const flockCenter = new THREE.Vector3(), centerShift = new THREE.Vector3()
-  const centerFlockView = (dt: number) => {
+  const centerFlockView = (dt: number, immediate = false) => {
     if (!followFlock || !controls.enabled || removing.size || visit) return
+    if (!immediate && !viewInteracting && wheelDistance === undefined) return
     const visible = birds.filter(bird => bird.root.visible)
     if (!visible.length) { controls.minDistance = 4; return }
-    flockCenter.set(0, 0, 0)
-    for (const bird of visible) flockCenter.add(bird.root.position)
-    flockCenter.multiplyScalar(1 / visible.length); flockCenter.y = 1.1
+    const xs=visible.map(bird=>bird.root.position.x).sort((a,b)=>a-b)
+    const zs=visible.map(bird=>bird.root.position.z).sort((a,b)=>a-b)
+    flockCenter.set(xs[Math.floor(xs.length/2)],1.1,zs[Math.floor(zs.length/2)])
+    const ordered=[...visible].sort((a,b)=>a.root.position.distanceToSquared(flockCenter)-b.root.position.distanceToSquared(flockCenter))
+    const core=ordered.slice(0,visible.length<5?visible.length:Math.ceil(visible.length*.8))
+    flockCenter.set(0,0,0)
+    for(const bird of core)flockCenter.add(bird.root.position)
+    flockCenter.multiplyScalar(1/core.length);flockCenter.y=1.1
     // Translate camera and orbit pivot together, preserving the user's viewing angle.
-    centerShift.copy(flockCenter).sub(controls.target).multiplyScalar(1 - Math.exp(-dt * 4))
+    centerShift.copy(flockCenter).sub(controls.target).multiplyScalar(immediate ? 1 : 1 - Math.exp(-dt * 12))
     controls.target.add(centerShift); camera.position.add(centerShift)
-    const radii = visible.map(bird => Math.hypot(bird.root.position.x - flockCenter.x, bird.root.position.z - flockCenter.z)).sort((a, i) => a - i)
-    // Use the main flock, so a single wandering bird cannot force a large zoom-out.
-    const radius = radii[Math.floor((radii.length - 1) * .7)]
-    const minimum = THREE.MathUtils.clamp(4 + radius * .7 / Math.min(1, camera.aspect), 4, 13)
-    controls.minDistance = THREE.MathUtils.damp(controls.minDistance, minimum, 4, dt)
+    // Centering must not change the distance chosen by the user.
+    controls.minDistance=4
   }
+  controls.addEventListener('start', () => { speechFocus=undefined;viewInteracting=true;wheelDistance=undefined;const first=!followFlock;followFlock=true;centerFlockView(0,first) })
+  controls.addEventListener('end', () => { viewInteracting=false })
+  renderer.domElement.addEventListener('wheel',event=>{
+    if(!controls.enabled || visit || removing.size || !event.deltaY)return
+    speechFocus=undefined
+    event.preventDefault();event.stopImmediatePropagation()
+    const first=!followFlock;followFlock=true;centerFlockView(0,first)
+    const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?container.clientHeight:1)
+    wheelDistance=THREE.MathUtils.clamp((wheelDistance??camera.position.distanceTo(controls.target))*Math.exp(THREE.MathUtils.clamp(delta,-480,480)*.0015),controls.minDistance,controls.maxDistance)
+  },{passive:false,capture:true})
   const updateCount = () => {
     container.dataset.pigeonCount = String(birds.length)
     container.dataset.pigeonIds = birds.map(i => i.id).join(',')
@@ -224,7 +261,7 @@ export function createWorld(container: HTMLElement) {
     behaviors.cancel(bird)
     visit?.release(id)
     removing.add(id); bird.bubble.textContent = ''; bird.velocity.set(0, 0, 0)
-    const hole = new THREE.Group()
+    const hole = new THREE.Group();hole.name='pigeon-removal-black-hole'
     hole.position.set(bird.root.position.x, .015, bird.root.position.z)
     hole.rotation.x = -Math.PI / 2
     const disk = new THREE.Mesh(new THREE.CircleGeometry(1.08, 64), new THREE.MeshBasicMaterial({ color: 0x000000 }))
@@ -378,7 +415,27 @@ export function createWorld(container: HTMLElement) {
       sun.shadow.camera.updateProjectionMatrix()
     }
     centerFlockView(dt)
-    controls.update(); renderer.render(scene, camera)
+    controls.update()
+    if(wheelDistance!==undefined) {
+      if(!controls.enabled || visit || removing.size)wheelDistance=undefined
+      else {
+        const offset=camera.position.clone().sub(controls.target), distance=offset.length()
+        const next=THREE.MathUtils.damp(distance,wheelDistance,14,dt)
+        camera.position.copy(controls.target).addScaledVector(offset.normalize(),next)
+        if(Math.abs(next-wheelDistance)<.005)wheelDistance=undefined
+      }
+    }
+    if (speechFocus) {
+      if (!controls.enabled || visit || removing.size || !birds.some(bird => bird.id === speechFocus!.id && bird.root.visible)) speechFocus = undefined
+      else {
+        const progress = THREE.MathUtils.smoothstep(now - speechFocus.start, 0, 650)
+        camera.position.lerpVectors(speechFocus.from, speechFocus.cameraTo, progress)
+        controls.target.lerpVectors(speechFocus.targetFrom, speechFocus.targetTo, progress)
+        camera.lookAt(controls.target)
+        if (progress === 1) speechFocus = undefined
+      }
+    }
+    renderer.render(scene, camera)
     const viewDistance = camera.position.distanceTo(controls.target)
     // Separate thresholds prevent flickering while wheel damping settles.
     if (viewDistance >= bubbleHideDistance) bubblesVisibleAtZoom = false
@@ -397,9 +454,22 @@ export function createWorld(container: HTMLElement) {
     }
   })
   return {
+    focusSpeech(id: string) {
+      if (!controls.enabled || visit || removing.size || speechFocus?.id === id) return
+      const bird = birds.find(bird => bird.id === id && bird.root.visible)
+      if (!bird) return
+      const anchor = bird.head.getWorldPosition(new THREE.Vector3()); anchor.y += .56; anchor.project(camera)
+      const distance = camera.position.distanceTo(controls.target)
+      if (distance <= 12 && anchor.z > -1 && anchor.z < 1 && Math.abs(anchor.x) < .75 && Math.abs(anchor.y) < .75) return
+      wheelDistance = undefined; viewInteracting = false; followFlock = false
+      const targetTo = bird.root.position.clone().add(new THREE.Vector3(0, 1.7, 0))
+      const direction = camera.position.clone().sub(controls.target).normalize()
+      speechFocus = { id, start: performance.now(), from: camera.position.clone(), targetFrom: controls.target.clone(), targetTo, cameraTo: targetTo.clone().addScaledVector(direction, Math.min(distance, 12)) }
+    },
     say(id: string, message: string) {
       const bird = birds.find(i => i.id === id)
       if (bird && !removing.has(id)) {
+        if(bird.bubble.textContent===message)return
         const text = document.createElement('span'); text.className = 'wide-text'; text.textContent = message
         bird.bubble.replaceChildren(text)
       }
@@ -410,7 +480,7 @@ export function createWorld(container: HTMLElement) {
       container.dataset.pigeonCount = String(birds.length)
       container.dataset.pigeonIds = birds.map(i => i.id).join(',')
     },
-    add, remove, releasePoodle, get poodleActive() { return !!visit }, get paused() { return paused }, get count() { return birds.length },
+    add, remove, releasePoodle, releaseCar, releaseHuman: () => releasePoodle(true), get poodleActive() { return !!visit }, get paused() { return paused }, get count() { return birds.length },
     togglePause() { paused = !paused; return paused },
     scatter() { birds.forEach((bird, i) => { bird.timer = .3 + i * .22; bird.fly() }) },
     resetView() { followFlock = false; controls.minDistance = 4; camera.position.set(0, 4, 14); controls.target.set(0, 1, 0) },

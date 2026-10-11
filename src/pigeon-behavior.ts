@@ -24,7 +24,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
   heart.moveTo(0, -.5); heart.bezierCurveTo(-.9, .05, -.55, .8, 0, .35); heart.bezierCurveTo(.55, .8, .9, .05, 0, -.5)
   const heartGeometry = new THREE.ShapeGeometry(heart)
   const tip = new THREE.Vector3()
-  let matingCooldown = between(30, 40)
+  let matingCooldown = between(18, 26)
   const eligible = (bird: Pigeon) => bird.root.visible && bird.root.position.y < .05 && !bird.flightDuration && bird.settle <= 0 && !busy.has(bird)
   const reset = (bird: Pigeon) => {
     bird.root.position.y = 0; bird.torso.position.y = 0; bird.torso.rotation.x = 0
@@ -44,7 +44,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
     for (const bird of action.birds) {
       busy.delete(bird)
       if (birds.includes(bird)) { reset(bird); bird.chooseTarget(); cooldowns.set(bird, between(14, 32)) }
-      if (action.kind === 'mating' && birds.includes(bird)) matingRest.set(bird, between(100, 160))
+      if (action.kind === 'mating' && birds.includes(bird)) matingRest.set(bird, between(60, 90))
     }
     actions.delete(action)
   }
@@ -83,19 +83,24 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       for (const bird of cooldowns.keys()) if (!birds.includes(bird)) cooldowns.delete(bird)
       for (const action of [...actions]) if (action.birds.some(bird => !birds.includes(bird) || excluded(bird))) finish(action)
       const cap = Math.min(5, Math.max(1, Math.ceil(birds.length * .22)))
-      // An opportunity without an eligible pair also resets the timer.
-      // Each opportunity waits for a fresh random interval.
+      // Occasionally start two separate pairs; unavailable partners get a short retry.
       if (allowNew && matingCooldown === 0) {
-        matingCooldown = between(30, 40)
-        const chance = 1
+        matingCooldown = between(18, 26)
         const available = birds.filter(bird => !excluded(bird) && eligible(bird) && !(matingRest.get(bird) ?? 0))
-        const canStart = available.length >= 2 && busy.size + 2 <= Math.max(2, cap) && ![...actions].some(action => action.kind === 'mating')
-        const offset = canStart && random() < chance ? Math.floor(random() * available.length) : -1
+        const pairLimit = available.length >= 4 && random() < .35 ? 2 : 1
+        const activePairs = [...actions].filter(action => action.kind === 'mating').length
+        const capacity = Math.max(pairLimit * 2, cap)
+        const canStart = available.length >= 2 && busy.size + 2 <= capacity && activePairs < pairLimit
+        const offset = canStart ? Math.floor(random() * available.length) : -1
+        let started = 0
         for (let i = 0; offset >= 0 && i < available.length; i++) {
+          if (activePairs + started >= pairLimit || busy.size + 2 > capacity) break
           const bird = available[(offset + i) % available.length]
-          const partner = available.find(other => other !== bird && other.root.position.distanceTo(bird.root.position) < 6 && birds.every(third => third === bird || third === other || third.root.position.distanceTo(other.root.position) > 2.7))
-          if (partner) { begin('mating', [bird, partner]); break }
+          if (!eligible(bird)) continue
+          const partner = available.find(other => other !== bird && eligible(other) && other.root.position.distanceTo(bird.root.position) < 6 && birds.every(third => third === bird || third === other || third.root.position.distanceTo(other.root.position) > 2.7))
+          if (partner) { begin('mating', [bird, partner]); started++ }
         }
+        if (!started) matingCooldown = between(3, 6)
       }
       for (const bird of birds) {
         if (!cooldowns.has(bird)) cooldowns.set(bird, between(7, 22))

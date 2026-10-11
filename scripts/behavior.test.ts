@@ -93,11 +93,11 @@ test('an eligible nearby pair starts without probability rejection', () => {
     wasMating = mating
   }
   assert.ok(starts.length > 0)
-  assert.ok(starts[0] >= 30)
+  assert.ok(starts[0] >= 18 && starts[0] <= 26)
   controller.dispose()
 })
 
-test('a small flock cannot repeatedly mate without a long individual rest', () => {
+test('a small flock still respects the shorter individual rest', () => {
   const birds = [bird('top'), bird('bottom', 0, 3)]
   const controller = createPigeonBehaviors(new THREE.Scene(), birds, () => 0)
   const starts: number[] = []
@@ -109,9 +109,32 @@ test('a small flock cannot repeatedly mate without a long individual rest', () =
     wasMating = mating
   }
   assert.ok(starts.length > 1, 'Rare behavior remains possible')
-  assert.ok(starts[0] >= 30)
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 108, 'Pair must finish and rest before mating again')
+  assert.ok(starts[0] >= 18)
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 68, 'Pair must finish and rest before mating again')
   controller.dispose()
+})
+
+test('occasional double pairing uses four distinct birds and never exceeds two pairs', () => {
+  for (const [random, expected] of [[() => 0, 2], [() => .8, 1]] as const) {
+    const birds = [bird('a'), bird('b', 0, 3), bird('c', 10, 0), bird('d', 10, 3)]
+    const controller = createPigeonBehaviors(new THREE.Scene(), birds, random)
+    let observed = false
+    for (let i = 0; i < 600; i++) {
+      controller.update(.05, true)
+      const pairs = controller.summary.actions.filter(action => action.kind === 'mating')
+      assert.ok(pairs.length <= 2)
+      if (!pairs.length) continue
+      assert.equal(pairs.length, expected)
+      observed = true
+      assert.equal(new Set(pairs.flatMap(pair => pair.ids)).size, expected * 2)
+      controller.cancel()
+      assert.equal(controller.summary.actions.length, 0)
+      break
+    }
+    assert.ok(observed, 'An eligible flock starts the selected number of pairs')
+    assert.ok(birds.every(bird => bird.root.position.y === 0))
+    controller.dispose()
+  }
 })
 
 test('hidden, airborne and externally controlled birds never start an ambient action', () => {

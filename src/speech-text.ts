@@ -12,7 +12,7 @@ function limitChars(chars: SpeechChar[]) {
   const result: SpeechChar[] = []
   for (const c of chars) {
     if (c.automatic ? ++noise > 75 : ++human > SPEECH_LIMIT) continue
-    if (c.char === '9' && nines === 4) { result.push({ char: '.', automatic: true }, { char: '.', automatic: true }); nines = 0 }
+    if (c.char === '9' && nines === 4) continue
     result.push(c); nines = c.char === '9' ? nines + 1 : 0
   }
   return result
@@ -50,14 +50,18 @@ export function editSpeech(previous: SpeechChar[], next: string, cursor: number,
 }
 
 export function addNoise(previous: SpeechChar[], cursor: number, random = Math.random) {
+  cursor = Math.max(0, Math.min(cursor, speechValue(previous).length))
   const room = 75 - previous.filter(c => c.automatic).length
   if (!previous.some(c => !c.automatic && c.char.trim()) || room <= 0) return { chars: previous, cursor }
   // Append immediately after the newly committed text, never at a random old position.
   const position = Array.from(speechValue(previous).slice(0, cursor)).length
-  // Allocate whole dot groups instead of truncating one to a single dot at the limit.
+  const left = speechValue(previous.slice(0, position)).match(/9+$/)?.[0].length ?? 0
+  const right = speechValue(previous.slice(position)).match(/^9+/)?.[0].length ?? 0
   const leading = room >= 5 ? 2 : 0
   const trailing = room >= 3 ? 2 : 0
-  const nines = 1 + Math.floor(random() * Math.min(4, room - leading - trailing))
+  const capacity = Math.min(room - leading - trailing, 4 - (leading ? 0 : left) - (trailing ? 0 : right))
+  if (capacity <= 0) return { chars: previous, cursor }
+  const nines = 1 + Math.floor(random() * capacity)
   const noise = '.'.repeat(leading) + '9'.repeat(nines) + '.'.repeat(trailing)
   const chars = limitChars([...previous.slice(0, position), ...Array.from(noise).map(char => ({ char, automatic: true })), ...previous.slice(position)])
   const insertionOffset = speechValue(previous.slice(0, position)).length

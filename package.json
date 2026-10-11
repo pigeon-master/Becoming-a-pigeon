@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:human": "node scripts/human-browser.mjs",
     "test:supabase": "node --test scripts/supabase.test.mjs",
     "test:supabase-browser": "node scripts/supabase-browser.mjs",
     "test:behavior": "node --experimental-strip-types --test scripts/behavior.test.ts",
