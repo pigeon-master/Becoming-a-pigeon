@@ -42,13 +42,14 @@ body,button,input,output,.speech-bubble{font-family:var(--ui-font);font-weight:4
 .remove-actions button{flex:0 0 calc((100% - 12px)/4);min-width:0;padding:12px 8px;border:0;border-radius:40px;color:#fff;font-size:15px;font-weight:300;transition:filter .15s}
 .remove-actions button:not(:disabled):hover{filter:brightness(1.08)}
 .remove-actions button:focus-visible{outline:2px solid #fff;outline-offset:3px}
+@media(hover:none) and (pointer:coarse){#close,#remove-close{-webkit-appearance:none;appearance:none}#close:focus,#close:focus-visible,#remove-close:focus,#remove-close:focus-visible{outline:none;box-shadow:none}}
 #remove-close{background:#aaa7af}
 #remove-ok{background:#47736c}
 #remove-error{font-size:13px;line-height:1.7;color:#fff}
-@media(max-width:600px){#remove-pigeon{top:15px;right:20px;font-size:12px}#remove-message{font-size:14px}#action-bar button{padding-inline:20px}}
+@media(max-width:600px){#remove-pigeon{top:max(15px,env(safe-area-inset-top));right:20px;font-size:12px;line-height:18px}#remove-message{font-size:14px}#action-bar button{padding-inline:20px}}
 
 #snap:not(:disabled):hover{border-color:#ff3b30}#snap:not(:disabled):hover span{background:#ff3b30}
 #copyright{position:fixed;top:max(30px,env(safe-area-inset-top));left:max(30px,env(safe-area-inset-left));z-index:3;margin:0;max-width:calc(100% - 230px);font-size:11px;line-height:1.5;font-weight:300;color:#171717;pointer-events:none}
 #copyright .wide-text{transform-origin:left}
 #app:has(#speak[hidden]) #copyright{display:none}
-@media(max-width:600px){#copyright{top:25px;left:max(20px,env(safe-area-inset-left));max-width:calc(100% - 200px);font-size:9px}}
+@media(max-width:600px){#copyright{top:calc(max(15px,env(safe-area-inset-top)) + 10px);left:max(20px,env(safe-area-inset-left));max-width:calc(100% - 200px);height:18px;display:flex;align-items:center;font-size:6px;line-height:1;white-space:nowrap}}

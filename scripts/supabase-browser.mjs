@@ -51,8 +51,9 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   const rows = new Map(), errors = []
   let sequence = 0, failedSave = false, delaySnapshot = false
-  async function visitor() {
-    const context = await browser.newContext()
+  async function visitor(options = {}) {
+    const context = await browser.newContext(options)
+    await context.addInitScript(() => { Math.random = () => .5 })
     const user = randomUUID()
     const jwt = [Buffer.from('{}').toString('base64url'), Buffer.from(JSON.stringify({ sub: user, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'), 'fixture'].join('.')
     await context.route('https://fixture.supabase.co/**', async route => {
@@ -154,6 +155,59 @@ try {
   await alice.locator('#speech-panel').waitFor({ state: 'hidden' })
   await alice.waitForFunction(() => document.getElementById('speech-error').hidden)
   assert.match(rows.get(owner.id).message, /Retry/)
+  const noiseSamples=[],hangulNoiseSamples=[]
+  for (const options of [{}, {isMobile:true,hasTouch:true,viewport:{width:390,height:844}}]) {
+    const page=await visitor(options), person=await page.evaluate(()=>window.capture())
+    await page.locator('#speak').click()
+    await page.locator('#speech-input').pressSequentially('abcdefghijklmnop',{delay:160})
+    await page.waitForTimeout(200)
+    await page.locator('#speech-input').press('Enter')
+    await page.locator('#speech-panel').waitFor({state:'hidden'})
+    await page.waitForFunction(id=>document.getElementById('speech-panel').hidden&&window.words.get(id),person.id)
+    await page.waitForTimeout(200)
+    noiseSamples.push(rows.get(person.id).automatic.length)
+    // Word replacement may discard injected text, but must not re-arm noise each time.
+    await page.locator('#speak').click()
+    await page.evaluate(async()=>{
+      const input=document.getElementById('speech-input')
+      for(let i=0;i<20;i++){
+        input.setSelectionRange(0,input.value.length)
+        input.dispatchEvent(new InputEvent('beforeinput',{inputType:'insertReplacementText',bubbles:true}))
+        input.value=i%2?'word':'ward';input.setSelectionRange(4,4)
+        input.dispatchEvent(new InputEvent('input',{inputType:'insertReplacementText',bubbles:true}))
+        await new Promise(done=>setTimeout(done,140))
+      }
+    })
+    assert.equal(await page.locator('#speech-input').inputValue(),'word','Repeated word replacements do not repeatedly generate noise')
+    assert.equal(await page.locator('#speech-count').textContent(),'4 / 50')
+    if(options.isMobile){
+      const native=await page.context().newCDPSession(page)
+      await native.send('Input.imeSetComposition',{text:'한글',selectionStart:2,selectionEnd:2})
+      await page.waitForTimeout(200)
+      assert.ok((await page.locator('#speech-input').inputValue()).endsWith('한글'),'Touch composition is not interrupted by noise')
+      await native.send('Input.insertText',{text:'한글'})
+      await page.locator('#speech-input').press('Enter')
+      await page.locator('#speech-panel').waitFor({state:'hidden'})
+      await native.detach()
+    }
+    await page.evaluate(()=>window.capture())
+    await page.locator('#speak').click();await page.locator('#speech-input').focus()
+    const hangul=await page.context().newCDPSession(page)
+    for(let i=0;i<10;i++){
+      for(const text of ['ㅎ','하','한'])await hangul.send('Input.imeSetComposition',{text,selectionStart:1,selectionEnd:1})
+      await hangul.send('Input.insertText',{text:'한'})
+      await page.waitForTimeout(160)
+    }
+    await page.waitForTimeout(200)
+    const hangulValue=await page.locator('#speech-input').inputValue()
+    assert.equal(hangulValue.replace(/[9.]/g,''),'한'.repeat(10),'Repeated composition revisions commit each Hangul syllable once')
+    assert.equal(await page.locator('#speech-count').textContent(),'10 / 50')
+    hangulNoiseSamples.push(hangulValue.length-10)
+    await hangul.detach()
+    await page.close()
+  }
+  assert.equal(noiseSamples[0],noiseSamples[1],'Touch and desktop English input generate the same amount of noise')
+  assert.equal(hangulNoiseSamples[0],hangulNoiseSamples[1],'Touch and desktop Hangul input generate the same amount of noise')
   assert.deepEqual(errors, [])
   console.log('PASS: ownership, Enter/arrow/outside saves, native Hangul completion, public reads, reload and failed-save retry.')
 } finally {

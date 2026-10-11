@@ -12,17 +12,21 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   const removeButton = document.getElementById('remove-pigeon') as HTMLButtonElement
   const panel = document.getElementById('speech-panel')!
   const input = document.getElementById('speech-input') as HTMLInputElement
+  const touchInput = matchMedia('(pointer: coarse)').matches
+  input.setAttribute('autocorrect', 'off'); input.setAttribute('autocapitalize', 'off')
   const counter = document.getElementById('speech-count')!
   const error = document.getElementById('speech-error')!
   let owner: PigeonOwner | undefined
   let composing = false, endingComposition = false, dirty = false, lastSaved = ''
   let chars: SpeechChar[] = [], edit: SpeechEdit | undefined
   let resumeNoise = false
+  let noiseStarted = false
   let noiseProgress = 0, noiseInterval = 7 + Math.floor(Math.random() * 4), noiseDue = false
   let submitPending = false
   let focusAfterSubmit = false
   let enterHeld = false
   let compositionTimer: ReturnType<typeof setTimeout>, saveTimer: ReturnType<typeof setTimeout>, submitTimer: ReturnType<typeof setTimeout>
+  let noiseTimer: ReturnType<typeof setTimeout>
   let saves = Promise.resolve()
   const count = () => { counter.textContent = `${humanCount(chars)} / ${SPEECH_LIMIT}` }
   const persist = () => {
@@ -57,31 +61,44 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   const distort = (caret: number) => {
     const before = automaticIndices(chars).length
     const result = addNoise(chars, caret)
+    if (automaticIndices(result.chars).length === before) return
     if (automaticIndices(result.chars).length > before) {
+      noiseStarted = true
       resumeNoise = false; noiseDue = false; noiseProgress = 0; noiseInterval = 7 + Math.floor(Math.random() * 4)
     }
     chars = result.chars; input.value = speechValue(chars); input.setSelectionRange(result.cursor, result.cursor); changed()
   }
+  const applyNoise = (caret: number) => {
+    clearTimeout(noiseTimer)
+    if (!touchInput) { distort(caret); return }
+    // Let a touch keyboard finish composing/predicting before changing its value.
+    noiseTimer = setTimeout(() => {
+      if (!composing && !endingComposition && !submitPending && !panel.hidden && noiseDue) distort(input.selectionStart ?? input.value.length)
+    }, 120)
+  }
   const commitInput = (inputType = '', modelOnly = false) => {
     if (input.value === speechValue(chars)) {
       edit = undefined
-      if (!modelOnly && noiseDue && input.value.trim()) distort(input.selectionStart ?? input.value.length)
+      if (!modelOnly && noiseDue && input.value.trim()) applyNoise(input.selectionStart ?? input.value.length)
       return
     }
     const caret = input.selectionStart ?? input.value.length
+    const previousCount = humanCount(chars)
     const result = editSpeech(chars, input.value, caret, edit); edit = undefined
     // Removing even part of an automatic group re-arms noise for the next insertion.
     // Backspace itself must never create replacement noise.
-    if (automaticIndices(result.chars).length < automaticIndices(chars).length) resumeNoise = true
+    if (inputType.startsWith('delete') && automaticIndices(result.chars).length < automaticIndices(chars).length) resumeNoise = true
     chars = result.chars
     const insertion = !inputType || inputType.startsWith('insert')
     if (insertion && result.inserted > 0) {
       // Count committed characters equally for Latin input and completed Hangul syllables.
       // Carry the count through rapid IME transitions without changing its live DOM.
-      noiseProgress += result.inserted
-      noiseDue ||= resumeNoise || !chars.some(c => c.automatic && c.char === '9') || noiseProgress >= noiseInterval
+      // Mobile keyboards replace whole words and repeatedly revise a syllable.
+      // Count only growth, not all characters reported by each replacement event.
+      noiseProgress += Math.max(0, humanCount(chars) - previousCount)
+      noiseDue ||= resumeNoise || !noiseStarted || noiseProgress >= noiseInterval
     }
-    if (!chars.length) { noiseProgress = 0; noiseDue = false }
+    if (!chars.length) { noiseProgress = 0; noiseDue = false; noiseStarted = false }
     // Assigning value/selection during a Korean IME transition can recommit a syllable.
     // A new composition may consume the previous result into the model without touching DOM.
     if (modelOnly) { changed(); return }
@@ -89,10 +106,11 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     if (input.value !== next) {
       input.value = next; input.setSelectionRange(result.cursor, result.cursor)
     }
-    if (insertion && result.inserted > 0 && input.value.trim() && noiseDue) distort(result.cursor)
+    if (insertion && result.inserted > 0 && input.value.trim() && noiseDue) { applyNoise(result.cursor); if (touchInput) changed() }
     else changed()
   }
   input.addEventListener('beforeinput', event => {
+    clearTimeout(noiseTimer)
     const type = (event as InputEvent).inputType
     if (endingComposition && type !== 'insertFromComposition' && type !== 'insertCompositionText') {
       clearTimeout(compositionTimer); endingComposition = false; commitInput('insertFromComposition', true)
@@ -100,6 +118,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     if (!composing && !endingComposition) edit = { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0, type }
   })
   input.addEventListener('compositionstart', () => {
+    clearTimeout(noiseTimer)
     clearTimeout(compositionTimer)
     if (endingComposition) { endingComposition = false; commitInput('insertFromComposition', true) }
     edit = { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0, type: 'insertCompositionText' }
@@ -116,7 +135,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     }, 0)
   })
   input.addEventListener('input', event => { if (!composing && !endingComposition && !(event as InputEvent).isComposing) commitInput((event as InputEvent).inputType) })
-  const finishClose = () => { panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
+  const finishClose = () => { clearTimeout(noiseTimer); panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
   const scheduleSubmit = () => {
     clearTimeout(submitTimer)
     submitTimer = setTimeout(() => {
@@ -167,7 +186,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     setOwner(next: PigeonOwner) {
       finishClose(); clearTimeout(compositionTimer); composing = false; endingComposition = false
       clearTimeout(submitTimer); submitPending = false; enterHeld = false; noiseProgress = 0; noiseDue = false
-      owner = next; chars = []; input.value = ''; dirty = false; lastSaved = ''; error.hidden = true; resumeNoise = false
+      owner = next; chars = []; input.value = ''; dirty = false; lastSaved = ''; error.hidden = true; resumeNoise = false; noiseStarted = false
       rememberOwners([next])
       button.hidden = false; removeButton.hidden = false; count()
       if (actionBar) actionBar.dataset.participation = 'owned'
@@ -182,14 +201,14 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
         if (owner && snapshot.birds.some(b => b.id === owner!.id)) persist()
         clearTimeout(compositionTimer); clearTimeout(saveTimer); composing = false; endingComposition = false
         clearTimeout(submitTimer); submitPending = false; enterHeld = false; noiseProgress = 0; noiseDue = false
-        owner = next; panel.hidden = true; button.setAttribute('aria-expanded', 'false')
-        chars = []; input.value = ''; dirty = false; lastSaved = ''; edit = undefined; error.hidden = true; resumeNoise = false
+        clearTimeout(noiseTimer); owner = next; panel.hidden = true; button.setAttribute('aria-expanded', 'false')
+        chars = []; input.value = ''; dirty = false; lastSaved = ''; edit = undefined; error.hidden = true; resumeNoise = false; noiseStarted = false
         count()
       }
       button.hidden = !next; removeButton.hidden = !next
       if (actionBar) actionBar.dataset.participation = next ? 'owned' : 'empty'
       if (!bird) return
-      if (!dirty && !composing && !endingComposition && panel.hidden) { chars = restoreSpeech(bird.message, bird.automatic); input.value = speechValue(chars); lastSaved = input.value; count() }
+      if (!dirty && !composing && !endingComposition && panel.hidden) { chars = restoreSpeech(bird.message, bird.automatic); noiseStarted = chars.some(c => c.automatic); input.value = speechValue(chars); lastSaved = input.value; count() }
     },
   }
 }
