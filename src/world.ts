@@ -7,6 +7,9 @@ import { loadHumanPhotos } from './human'
 import { loadChihuahuaPhotos } from './chihuahua'
 import { loadCarPhotos } from './compact-car'
 import { createCarVisit } from './car-visit'
+import { createWizardVisit } from './wizard-visit'
+import { loadWizardPhotos } from './wizard'
+import type { HandWave } from './hand-tracking'
 import { createPigeonBehaviors } from './pigeon-behavior'
 
 const rand = (a: number, i: number) => a + Math.random() * (i - a)
@@ -188,7 +191,16 @@ export function createWorld(container: HTMLElement) {
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground)
   const birds: Pigeon[] = []
   const behaviors = createPigeonBehaviors(scene, birds)
-  let visit: ReturnType<typeof createPoodleVisit> | ReturnType<typeof createCarVisit> | undefined
+  let visit: ReturnType<typeof createPoodleVisit> | ReturnType<typeof createCarVisit> | ReturnType<typeof createWizardVisit> | undefined
+  const releaseWizard=async()=>{
+    if(visit||removing.size)return
+    await loadWizardPhotos();if(visit||removing.size)return
+    behaviors.cancel();controls.enabled=false
+    const maxDistance=controls.maxDistance;controls.maxDistance=1000
+    return new Promise<void>(resolve=>{
+      visit=createWizardVisit(scene,camera,container,birds,()=>{visit=undefined;controls.maxDistance=maxDistance;controls.enabled=true;resolve();container.dispatchEvent(new Event('poodleend'))},controls.target)
+    })
+  }
   const releaseCar = async () => {
     if (visit || removing.size) return
     await loadCarPhotos()
@@ -375,7 +387,7 @@ export function createWorld(container: HTMLElement) {
     camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix()
   }); observer.observe(container)
   let paused = matchMedia('(prefers-reduced-motion: reduce)').matches
-  let last = performance.now(), time = 0
+  let last = performance.now(), time = 0, lastWizardShadow = -Infinity
   renderer.setAnimationLoop(now => {
     const dt = Math.min((now - last) / 1000, .05); last = now
     if (!document.hidden) visit?.update(dt)
@@ -435,6 +447,9 @@ export function createWorld(container: HTMLElement) {
         if (progress === 1) speechFocus = undefined
       }
     }
+    const wizardActive=!!visit&&'command' in visit
+    renderer.shadowMap.autoUpdate=!wizardActive
+    if(wizardActive&&now-lastWizardShadow>=50){renderer.shadowMap.needsUpdate=true;lastWizardShadow=now}
     renderer.render(scene, camera)
     const viewDistance = camera.position.distanceTo(controls.target)
     // Separate thresholds prevent flickering while wheel damping settles.
@@ -442,7 +457,7 @@ export function createWorld(container: HTMLElement) {
     else if (viewDistance <= bubbleShowDistance) bubblesVisibleAtZoom = true
     const anchor = new THREE.Vector3()
     for (const bird of birds) {
-      if (!bubblesVisibleAtZoom || !bird.root.visible || !bird.bubble.textContent) { bird.bubble.hidden = true; continue }
+      if (visit || container.dataset.visitorActive === 'true' || !bubblesVisibleAtZoom || !bird.root.visible || !bird.bubble.textContent) { bird.bubble.hidden = true; continue }
       // Project the animated head, including head-bobbing and flight, each frame.
       bird.head.getWorldPosition(anchor); anchor.y += .56; anchor.project(camera)
       bird.bubble.hidden = anchor.z < -1 || anchor.z > 1 || Math.abs(anchor.x) > .97 || Math.abs(anchor.y) > .97
@@ -480,7 +495,7 @@ export function createWorld(container: HTMLElement) {
       container.dataset.pigeonCount = String(birds.length)
       container.dataset.pigeonIds = birds.map(i => i.id).join(',')
     },
-    add, remove, releasePoodle, releaseCar, releaseHuman: () => releasePoodle(true), get poodleActive() { return !!visit }, get paused() { return paused }, get count() { return birds.length },
+    add, remove, releasePoodle, releaseCar, releaseWizard, wizardWave(wave:HandWave){if(visit&&'command' in visit)visit.command(wave)},stopWizard(){if(visit&&'stop' in visit)visit.stop()},releaseHuman: () => releasePoodle(true), get poodleActive() { return !!visit }, get paused() { return paused }, get count() { return birds.length },
     togglePause() { paused = !paused; return paused },
     scatter() { birds.forEach((bird, i) => { bird.timer = .3 + i * .22; bird.fly() }) },
     resetView() { followFlock = false; controls.minDistance = 4; camera.position.set(0, 4, 14); controls.target.set(0, 1, 0) },

@@ -12,7 +12,11 @@ export function createCarVisit(scene: THREE.Scene, camera: THREE.PerspectiveCame
   const car = createCompactCar(); scene.add(car.root)
   const participants = new Set(birds.map(bird=>bird.id))
   const allowedRemaining = Math.min(3, Math.max(0, participants.size - 1))
-  const center = birds.length ? birds.reduce((sum, bird) => sum.add(bird.root.position), new THREE.Vector3()).divideScalar(birds.length).setY(0) : new THREE.Vector3()
+  const visibleBirds = birds.filter(bird => bird.root.visible)
+  const xs = visibleBirds.map(bird => bird.root.position.x).sort((a,b) => a-b), zs = visibleBirds.map(bird => bird.root.position.z).sort((a,b) => a-b)
+  const median = new THREE.Vector3(xs[Math.floor(xs.length/2)] ?? viewTarget.x, 0, zs[Math.floor(zs.length/2)] ?? viewTarget.z)
+  const core = [...visibleBirds].sort((a,b) => a.root.position.distanceToSquared(median)-b.root.position.distanceToSquared(median)).slice(0, visibleBirds.length < 5 ? visibleBirds.length : Math.ceil(visibleBirds.length*.8))
+  const center = core.length ? core.reduce((sum, bird) => sum.add(bird.root.position), new THREE.Vector3()).divideScalar(core.length).setY(0) : median
   const forward = center.clone().sub(camera.position).setY(0).normalize()
   if (forward.lengthSq() < .1) forward.set(0, 0, -1)
   const right = new THREE.Vector3(-forward.z, 0, forward.x)
@@ -49,7 +53,7 @@ export function createCarVisit(scene: THREE.Scene, camera: THREE.PerspectiveCame
     exit.updateArcLengths()
   }
   const cameraFrom = camera.position.clone(), targetFrom = viewTarget.clone()
-  const targetTo = center.clone().add(new THREE.Vector3(0, 4.8, 0))
+  const targetTo = center.clone().add(new THREE.Vector3(0, 3.3, 0))
   const viewDirection = cameraFrom.clone().sub(targetFrom).normalize()
   const fitCamera = camera.clone(), cameraTo = new THREE.Vector3()
   car.root.updateMatrixWorld(true)
@@ -61,6 +65,13 @@ export function createCarVisit(scene: THREE.Scene, camera: THREE.PerspectiveCame
     cameraTo.copy(targetTo).addScaledVector(viewDirection,fitDistance)
     fitCamera.position.copy(cameraTo);fitCamera.lookAt(targetTo);fitCamera.updateMatrixWorld(true)
     let fits = true
+    // Include the flock at ground level, rather than fitting only the tall car.
+    for (const bird of core) {
+      for (const x of [-1.2,1.2]) for (const y of [0,3]) for (const z of [-1.2,1.2]) {
+        const projected = bird.root.position.clone().setY(0).add(new THREE.Vector3(x,y,z)).project(fitCamera)
+        if (Math.abs(projected.x)>.85 || Math.abs(projected.y)>.85 || projected.z< -1 || projected.z>1) fits=false
+      }
+    }
     // Fit the car near the flock and keep this view fixed for the whole drive.
     for (let i=0;i<48&&fits;i++) {
       const yaw=i/48*Math.PI*2, p=center

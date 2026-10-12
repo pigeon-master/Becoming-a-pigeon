@@ -19,22 +19,31 @@ body,button,input,output,.speech-bubble{font-family:var(--ui-font);font-weight:4
 #speech-close svg{display:block;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .text-button{border:0;border-radius:0;background:transparent;box-shadow:none;color:#000;padding:10px;font-weight:300}
 .text-button:not(:disabled):hover{color:#888}
-#remove-pigeon{position:fixed;top:max(20px,env(safe-area-inset-top));right:max(30px,env(safe-area-inset-right));z-index:3;font-size:14px}
-#poodle{position:fixed;top:calc(max(20px,env(safe-area-inset-top)) + 40px);right:max(30px,env(safe-area-inset-right));width:52px;height:44px;padding:4px 6px;border:0;background:transparent;color:#000;z-index:3}
-#poodle svg{display:block;width:100%;height:100%;transform:scaleX(-1)}
+#remove-pigeon{position:fixed;top:max(12px,env(safe-area-inset-top));left:max(16px,env(safe-area-inset-left));z-index:3;display:grid;place-items:start center;width:40px;height:44px;padding:4px}
+#remove-pigeon svg{display:block;width:21.5px;height:28.5px}
+#visitor-icons{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right));display:flex;flex-direction:column;align-items:center;gap:10px;z-index:3}
+#visitor-icons button{display:grid;place-items:center;width:52px;height:auto;padding:4px;border:0;background:transparent;color:#000}
+#poodle svg{display:block;width:38px;height:24px;transform:scaleX(-1)}
 #poodle:not(:disabled):hover{opacity:.65}
-#human{position:fixed;top:calc(max(20px,env(safe-area-inset-top)) + 136px);right:max(30px,env(safe-area-inset-right));width:52px;height:44px;padding:4px 9px;border:0;background:transparent;color:#000;z-index:3}
-#human svg{display:block;width:100%;height:100%}
+#human svg{display:block;width:12px;height:34px}
 #human:not(:disabled):hover{opacity:.65}
-#car{position:fixed;top:calc(max(20px,env(safe-area-inset-top)) + 88px);right:max(30px,env(safe-area-inset-right));width:52px;height:44px;padding:4px 6px;border:0;background:transparent;color:#000;z-index:3}
-#car svg{display:block;width:100%;height:100%}
+#wizard svg{display:block;width:14px;height:38px;overflow:visible}
+.wizard-guide{position:absolute;transform:translate(-50%,-100%);max-width:calc(100vw - 32px);font:400 17px/1.5 var(--ui-font);color:#171717;text-align:center;white-space:nowrap;pointer-events:none;z-index:2;text-shadow:0 1px 3px #fff}
+.wizard-guide .wide-text{transform:scaleX(1.1) skewX(-10deg)}
+@media(max-width:600px){.wizard-guide{font-size:13px}}
+#wizard:not(:disabled):hover{opacity:.65}
+#app:has(#remove-pigeon[hidden]) #wizard{display:none}
+#magic-camera{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:120px;width:210px;max-width:calc(100vw - 32px);aspect-ratio:16/9;background:#252525;border-radius:12px;overflow:hidden;z-index:5;box-shadow:0 3px 20px #0003}
+#magic-video{display:block;width:100%;height:100%;object-fit:contain;transform:scaleX(-1)}
+#magic-stop{position:absolute;top:4px;right:4px;display:grid;place-items:center;width:30px;height:30px;padding:5px;border:0;background:transparent;color:white}
+#magic-stop svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
+@media(max-width:600px){#magic-camera{right:max(10px,env(safe-area-inset-right));bottom:106px;width:156px}#magic-stop:focus{outline:none}}
+#car svg{display:block;width:40px;height:29px}
 #car:not(:disabled):hover{opacity:.65}
 #app:has(#remove-pigeon[hidden]) #car{display:none}
-@media(max-width:600px){#car{top:99px;right:20px}}
 #app:has(#remove-pigeon[hidden]) #human{display:none}
-@media(max-width:600px){#human{top:147px;right:20px}}
-#remove-pigeon[hidden]+#poodle{display:none}
-@media(max-width:600px){#poodle{top:51px;right:20px}}
+#app:has(#remove-pigeon[hidden]) #visitor-icons{display:none}
+@media(max-width:600px){#visitor-icons{top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));gap:8px}#visitor-icons button{width:40px;padding:4px}#poodle svg{width:24px;height:15.2px}#car svg{width:24px;height:17.3px}#human svg{width:10px;height:28px}#wizard svg{width:11px;height:30px}}
 #remove-dialog{position:fixed;inset:0;margin:auto;width:min(520px,calc(100% - 32px));padding:36px 30px 26px;background:#38373a;color:#fff;border-radius:20px;text-align:center;box-shadow:0 12px 60px #0003}
 #remove-dialog::backdrop{background:#ffffff30;backdrop-filter:none}
 #remove-message{margin:8px 0 30px;font-size:16px;line-height:1.7}
@@ -46,10 +55,10 @@ body,button,input,output,.speech-bubble{font-family:var(--ui-font);font-weight:4
 #remove-close{background:#aaa7af}
 #remove-ok{background:#47736c}
 #remove-error{font-size:13px;line-height:1.7;color:#fff}
-@media(max-width:600px){#remove-pigeon{top:max(15px,env(safe-area-inset-top));right:20px;font-size:12px;line-height:18px}#remove-message{font-size:14px}#action-bar button{padding-inline:20px}}
+@media(max-width:600px){#remove-pigeon{top:max(10px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));width:36px;height:40px}#remove-pigeon svg{width:19px;height:25px}#remove-message{font-size:14px}#action-bar button{padding-inline:20px}}
 
 #snap:not(:disabled):hover{border-color:#ff3b30}#snap:not(:disabled):hover span{background:#ff3b30}
-#copyright{position:fixed;top:max(30px,env(safe-area-inset-top));left:max(30px,env(safe-area-inset-left));z-index:3;margin:0;max-width:calc(100% - 230px);font-size:11px;line-height:1.5;font-weight:300;color:#171717;pointer-events:none}
-#copyright .wide-text{transform-origin:left}
+#copyright{position:absolute;top:calc(100% + 16px);left:50%;transform:translateX(-50%);z-index:3;margin:0;width:max-content;max-width:calc(100vw - 24px);text-align:center;white-space:nowrap;font-size:8.5px;line-height:1.5;font-weight:300;color:#fff;pointer-events:none}
+#copyright .wide-text{transform-origin:center}
 #app:has(#speak[hidden]) #copyright{display:none}
-@media(max-width:600px){#copyright{top:calc(max(15px,env(safe-area-inset-top)) + 10px);left:max(20px,env(safe-area-inset-left));max-width:calc(100% - 200px);height:18px;display:flex;align-items:center;font-size:6px;line-height:1;white-space:nowrap}}
+@media(max-width:600px){#copyright{top:calc(100% + 12px);font-size:5.8px}}

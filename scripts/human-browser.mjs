@@ -62,6 +62,12 @@ try {
       const facing=new THREE.Vector3(Math.sin(human.rotation.y),0,Math.cos(human.rotation.y)),towardCamera=camera.position.clone().sub(human.position).setY(0).normalize();
       return {knee:human.getObjectByName('left-hip').rotation.x,arms:human.getObjectByName('left-shoulder').rotation.z,heading:human.rotation.y,flockDistance:humanStandingDistance,facePixels:Math.abs(top.y-bottom.y)*375,faceAlignment:facing.dot(towardCamera),position:human.position.toArray()};
     };
+    window.headPreview=(profile=false)=>{
+      const person=createHuman(),preview=new THREE.Scene();preview.background=new THREE.Color(0xe8e8e8);preview.add(person.root);person.animate(0,false,0);person.root.updateMatrixWorld(true);
+      preview.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2.5);light.position.set(-3,9,6);preview.add(light);
+      const center=new THREE.Box3().setFromObject(person.root.getObjectByName('face')).getCenter(new THREE.Vector3()),view=new THREE.PerspectiveCamera(40,1000/750,.01,100);
+      view.position.copy(center).add(profile?new THREE.Vector3(1.9,.1,.1):new THREE.Vector3(1.25,.15,1.6));view.lookAt(center);renderer.render(preview,view);person.dispose();
+    };
     window.humanViews=async()=>{
       const samples=[],originalRandom=Math.random;
       try{
@@ -163,6 +169,25 @@ try {
       }
       return {clipped,distance:camera.position.distanceTo(new THREE.Vector3(0,1,0)),angle:before.dot(camera.getWorldDirection(new THREE.Vector3()))};
     };
+    window.carFlockFraming=async()=>{
+      await loadCarPhotos();visit?.dispose();birds.forEach(bird=>bird.dispose());birds.length=0;
+      const results=[];
+      for(const aspect of [1000/750,390/844])for(const polar of [.3,1.5]){
+        const testBirds=[];
+        for(let i=0;i<10;i++){
+          const bird=new Pigeon(new THREE.Mesh(new THREE.SphereGeometry(.3),new THREE.MeshStandardMaterial({color:0x53685e})));
+          bird.id='frame-'+i;bird.root.position.set(i===9?200:(i%3-1)*4,0,i===9?200:(Math.floor(i/3)-1)*3);scene.add(bird.root);testBirds.push(bird);
+        }
+        camera.aspect=aspect;camera.updateProjectionMatrix();camera.position.set(0,1+Math.cos(polar)*4,Math.sin(polar)*4);camera.lookAt(0,1,0);camera.updateMatrixWorld(true);
+        const pivot=new THREE.Vector3(0,1,0),check=createCarVisit(scene,camera,document.body,testBirds,()=>{},pivot);
+        for(let i=0;i<32;i++)check.update(.025);
+        const visible=testBirds.slice(0,9).filter(bird=>{const p=bird.root.position.clone().add(new THREE.Vector3(0,1,0)).project(camera);return bird.root.visible&&p.z>-1&&p.z<1&&Math.abs(p.x)<.95&&Math.abs(p.y)<.95}).length;
+        results.push({aspect,polar,visible,distance:camera.position.distanceTo(pivot)});
+        check.dispose();testBirds.forEach(bird=>bird.dispose());
+      }
+      camera.aspect=1000/750;camera.updateProjectionMatrix();camera.position.set(0,4,14);camera.lookAt(0,1,0);camera.updateMatrixWorld(true);
+      return results;
+    };
     window.carPreview=(rear=false)=>{
       const car=createCompactCar(),preview=new THREE.Scene();preview.background=new THREE.Color('white');preview.add(car.root);
       preview.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2.5);light.position.set(-5,9,8);preview.add(light);
@@ -228,7 +253,7 @@ try {
   assert.ok(joints.facePixels>=18,'The human face remains large enough to see: '+joints.facePixels)
   assert.ok(Math.abs(Math.atan2(Math.sin(joints.heading - pose.heading), Math.cos(joints.heading - pose.heading))) < .03, 'Hold the chosen pose direction')
   assert.ok(joints.faceAlignment>=.49,'The face remains toward the viewer during the gesture')
-  await page.screenshot({ path: resolve(artifacts, 'human-gesture.png') })
+  await page.screenshot({ path: resolve(artifacts, 'human-gesture.png') });await page.evaluate(()=>window.headPreview());await page.screenshot({path:resolve(artifacts,'human-head-three-quarter.png')});await page.evaluate(()=>window.headPreview(true));await page.screenshot({path:resolve(artifacts,'human-head-profile.png')})
   const returned = await page.evaluate(() => window.until('done')); assert.equal(returned.done, true); assert.equal(returned.visible, 8)
   assert.ok(returned.unlockReturned>=6,'Keep human visit controls locked until at least 75% have returned')
   const humanViews=await page.evaluate(()=>window.humanViews())
@@ -288,6 +313,8 @@ try {
     const result=await page.evaluate(()=>window.carUntil('done'))
     assert.equal(result.done,true);assert.ok(result.laps<=1);assert.ok(result.exitVisible>=0&&result.exitVisible<=3);assert.ok(result.cameraMotion<.000001,portrait?'Fixed camera on a portrait display':'Fixed camera from a rotated view');assert.ok(result.turn<.3);assert.equal(result.rear,true)
   }
+  const framedFlock=await page.evaluate(()=>window.carFlockFraming())
+  assert.ok(framedFlock.every(view=>view.visible>=8),'Car entry keeps the main flock visible with close/high/low/portrait views and a distant outlier: '+JSON.stringify(framedFlock))
   const closeHuman=await page.evaluate(()=>window.humanFraming(true))
   assert.equal(closeHuman.clipped,false);assert.ok(closeHuman.distance>4&&closeHuman.distance<28);assert.ok(closeHuman.angle>.999999,'Human zoom preserves the viewing angle')
   const distantHuman=await page.evaluate(()=>window.humanFraming(false))

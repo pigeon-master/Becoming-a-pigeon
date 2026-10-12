@@ -41,13 +41,25 @@ export function bindSmoothSurface(mesh: THREE.Mesh, nodes: THREE.Object3D[], inf
   const point = new THREE.Vector3(), moved = new THREE.Vector3(), output = new THREE.Vector3(), n = new THREE.Vector3(), outNormal = new THREE.Vector3()
   const weights: number[][] = []
   for (let i = 0; i < position.count; i++) weights.push(influence(point.fromArray(rest, i * 3)))
+  const movingVertices=weights.flatMap((w,i)=>w.some(value=>value>0)?[i]:[])
+  const remainders=weights.map(w=>Math.max(0,1-w.reduce((sum,value)=>sum+value,0)))
+  const transforms=nodes.map(()=>new THREE.Matrix4()),rotations=nodes.map(()=>new THREE.Matrix3())
+  const lastTransforms=nodes.map(()=>new THREE.Matrix4()),nextTransform=new THREE.Matrix4()
+  let initialized=false
   mesh.frustumCulled = false
   return () => {
     parent.updateWorldMatrix(true, true); parentInverse.copy(parent.matrixWorld).invert()
-    const transforms = nodes.map((node, i) => new THREE.Matrix4().multiplyMatrices(parentInverse, node.matrixWorld).multiply(inverseBind[i]))
-    const rotations = transforms.map(matrix => new THREE.Matrix3().getNormalMatrix(matrix))
-    for (let i = 0; i < position.count; i++) {
-      const w = weights[i], remainder = Math.max(0, 1 - w.reduce((sum, value) => sum + value, 0))
+    let changed=!initialized
+    nodes.forEach((node,i)=>{
+      nextTransform.multiplyMatrices(parentInverse,node.matrixWorld).multiply(inverseBind[i])
+      if(nextTransform.elements.some((value,j)=>Math.abs(value-lastTransforms[i].elements[j])>1e-7))changed=true
+      transforms[i].copy(nextTransform)
+    })
+    if(!changed)return
+    initialized=true
+    transforms.forEach((matrix,i)=>{lastTransforms[i].copy(matrix);rotations[i].getNormalMatrix(matrix)})
+    for (const i of movingVertices) {
+      const w = weights[i], remainder = remainders[i]
       point.fromArray(rest, i * 3); n.fromArray(restNormals, i * 3)
       output.copy(point).multiplyScalar(remainder); outNormal.copy(n).multiplyScalar(remainder)
       for (let j = 0; j < w.length; j++) if (w[j] > 0) {

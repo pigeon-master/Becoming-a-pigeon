@@ -29,10 +29,10 @@ export function steerAround(body: FlockBody, others: FlockBody[], desired: Vecto
   return steering.clampLength(0, desired.length())
 }
 
-export function resolveContacts(bodies: FlockBody[]) {
+export function resolveContacts(bodies: FlockBody[], passes = 20) {
   const contacts = new Map<number, Vector3>()
   // Iteration propagates separation through groups instead of fixing just one pair.
-  for (let pass = 0; pass < 20; pass++) {
+  for (let pass = 0; pass < passes; pass++) {
     let penetration = 0
     for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
       const a = bodies[i], b = bodies[j]
