@@ -7,6 +7,7 @@ import { SUPABASE_STORAGE } from './storage-mode'
 import { createFace } from './face'
 import { startHandTracking } from './hand-tracking'
 import { readOwners } from './ownership'
+import { loadWizardPhotos } from './wizard'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <p id="copyright"><span class="wide-text">ⓒ2026. CRAPPYROOM.</span></p>
@@ -55,16 +56,22 @@ for (const visitor of ['poodle', 'human', 'car', 'wizard']) el(visitor).onclick 
   if (!world || deleting || poodleRunning) return
   poodleRunning = true; speech?.close(); el('world').dataset.visitorActive = 'true'
   for (const id of ['poodle', 'human', 'car', 'wizard', 'join', 'speak', 'remove-pigeon']) el<HTMLButtonElement>(id).disabled = true
+  let wizardVisit:Promise<void>|undefined
   try {
     if(visitor==='wizard'){
       wizardAbort=new AbortController();el('magic-stop').hidden=true;el('magic-camera').hidden=false;el('magic-loading').hidden=false
-      wizardTracking=await startHandTracking(el<HTMLVideoElement>('magic-video'),wave=>world?.wizardWave(wave),error=>{if(!wizardAbort?.signal.aborted){el('world-error').textContent=error.message;el('world-error').hidden=false;stopWizardCamera();world?.stopWizard()}},wizardAbort.signal)
+      const signal=wizardAbort.signal
+      void loadWizardPhotos().catch(()=>{})
+      wizardTracking=await startHandTracking(el<HTMLVideoElement>('magic-video'),wave=>world?.wizardWave(wave),error=>{if(!signal.aborted){el('world-error').textContent=error.message;el('world-error').hidden=false;stopWizardCamera();world?.stopWizard()}},signal,()=>{
+        wizardVisit=world!.releaseWizard(signal)
+        void wizardVisit.catch(()=>{stopWizardCamera()})
+      })
       if(wizardAbort.signal.aborted){wizardTracking.stop();return}
       el('magic-loading').hidden=true
-      await world.releaseWizard()
+      await wizardVisit
     }else await(visitor==='human'?world.releaseHuman():visitor==='car'?world.releaseCar():world.releasePoodle())
   }
-  catch (error) { if(visitor==='wizard' && error instanceof DOMException && error.name==='AbortError')return; el('world-error').textContent = error instanceof Error ? error.message : '방문자를 불러오지 못했어요.'; el('world-error').hidden = false }
+  catch (error) { if(visitor==='wizard'){stopWizardCamera();world.stopWizard();await wizardVisit?.catch(reason=>{error=reason})}if(visitor==='wizard' && error instanceof DOMException && error.name==='AbortError')return; el('world-error').textContent = error instanceof Error ? error.message : '방문자를 불러오지 못했어요.'; el('world-error').hidden = false }
   finally {
     poodleRunning = false; delete el('world').dataset.visitorActive
     if(visitor==='wizard')stopWizardCamera()

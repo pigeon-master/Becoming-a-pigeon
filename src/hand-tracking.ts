@@ -80,7 +80,7 @@ export function conductorMotion(state:ConductorState|undefined,hands:{x:number;y
   const wave:HandWave={x:(left.wave.x+right.wave.x)/2,y:(left.wave.y+right.wave.y)/2,strength:1,depth:Math.max(left.wave.depth??0,right.wave.depth??0),arms:{left:left.wave,right:right.wave},conducting:energy,handCount:2,flourish:0,scatter:Math.min(1,Math.max((leftRate+rightRate)/2,Math.hypot(left.wave.x-right.wave.x,left.wave.y-right.wave.y)*.35))}
   return{state:{left:left.previous,right:right.previous,energy,time,leftActivity,rightActivity,lastBoth:time,dualSince},wave}
 }
-export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:HandWave)=>void,onError:(error:Error)=>void,signal?:AbortSignal){
+export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:HandWave)=>void,onError:(error:Error)=>void,signal?:AbortSignal,onCameraReady?:()=>void){
   if(!navigator.mediaDevices?.getUserMedia)throw new Error('카메라는 HTTPS 환경의 지원 브라우저에서 사용할 수 있어요.')
   let stopped=false,busy=false,timer:ReturnType<typeof setTimeout>|undefined,conductor:ConductorState|undefined,interval=83,frameStarted=0,lastVideoTime=-1,inferenceCost=0
   let worker:Worker|undefined
@@ -148,13 +148,17 @@ export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:Hand
     // Ask camera permission immediately from the icon interaction; no video is uploaded.
     if(signal?.aborted)throw new DOMException('종료됐어요.','AbortError')
     const camera=navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:360},aspectRatio:{ideal:16/9},frameRate:{ideal:24,max:24}},audio:false}).then(camera=>{if(stopped||signal?.aborted){camera.getTracks().forEach(track=>track.stop());throw new DOMException('종료됐어요.','AbortError')}return camera})
-    stream=await Promise.race([camera,ready.then(()=>{throw new Error('잘못된 카메라 준비 상태예요.')})])
-    document.addEventListener('visibilitychange',visibility)
-    video.srcObject=stream;video.muted=true;await video.play()
-    deadline=setTimeout(()=>rejectReady(new Error('손 추적 모델을 준비하지 못했어요. 다시 시도해 주세요.')),25000)
+    // Load the model alongside camera permission/startup, rather than after it.
     initRequested=true
     if(worker)worker.postMessage({type:'init',base});else void fallback()
+    stream=await Promise.race([camera,ready.then(()=>camera)])
+    document.addEventListener('visibilitychange',visibility)
+    video.srcObject=stream;video.muted=true;await video.play()
+    if(stopped)throw new DOMException('손 추적이 종료됐어요.','AbortError')
+    onCameraReady?.()
+    deadline=setTimeout(()=>rejectReady(new Error('손 추적 모델을 준비하지 못했어요. 다시 시도해 주세요.')),25000)
     await ready
+    clearTimeout(deadline)
     if(stopped)throw new Error('손 추적이 종료됐어요.')
     schedule();return{stop}
   }catch(error){stop();void ready.catch(()=>{});throw error}

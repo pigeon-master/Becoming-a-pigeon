@@ -63,7 +63,7 @@ body,button,input,output,.speech-bubble{font-family:var(--ui-font);font-weight:3
 @media(max-width:600px){#remove-pigeon{top:max(10px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));width:36px;height:40px}#remove-pigeon svg{width:19px;height:25px}#remove-message{font-size:14px}#action-bar button{padding-inline:20px}}
 
 #snap:not(:disabled):hover{border-color:#ff3b30}#snap:not(:disabled):hover span{background:#ff3b30}
-#copyright{position:absolute;top:calc(100% + 16px);left:50%;transform:translateX(-50%);z-index:3;margin:0;width:max-content;max-width:calc(100vw - 24px);text-align:center;white-space:nowrap;font-size:8.5px;line-height:1.5;font-weight:300;color:#fff;pointer-events:none}
+#copyright{position:absolute;top:calc(100% + 16px);left:50%;transform:translateX(-50%);z-index:3;margin:0;width:max-content;max-width:calc(100vw - 24px);text-align:center;white-space:nowrap;font-size:9.5px;line-height:1.5;font-weight:300;color:#fff;pointer-events:none}
 #copyright .wide-text{transform-origin:center}
 #app:has(#speak[hidden]) #copyright{display:none}
-@media(max-width:600px){#copyright{top:calc(100% + 12px);font-size:5.8px}}
+@media(max-width:600px){#copyright{top:calc(100% + 12px);font-size:7px}}

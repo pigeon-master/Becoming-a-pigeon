@@ -27,13 +27,13 @@ try{
   window.stream=stream;
   window.captureTimer=setInterval(()=>{g.fillRect(0,0,320,180)},100);
   if(!navigator.mediaDevices)Object.defineProperty(navigator,'mediaDevices',{value:{}});navigator.mediaDevices.getUserMedia=async()=>stream;
-  window.tracking=await startHandTracking(document.getElementById('video'),()=>window.waveCount++,error=>window.failures.push(error.message));
+  window.tracking=await startHandTracking(document.getElementById('video'),()=>window.waveCount++,error=>window.failures.push(error.message),undefined,()=>{window.cameraReadyAt=performance.now();window.cameraReadyCalls=(window.cameraReadyCalls??0)+1});window.trackingReadyAt=performance.now();
  };
  window.stop=()=>{window.tracking?.stop();clearInterval(window.captureTimer)};
  `)
  await build({configFile:false,root,publicDir:false,logLevel:'error',build:{outDir:resolve(root,'site')}})
  const site=resolve(root,'site');await cp(resolve('public/models'),resolve(site,'models'),{recursive:true})
- server=createServer(async(req,res)=>{try{const path=new URL(req.url,'http://fixture').pathname,file=resolve(site,'.'+(path==='/'?'/index.html':path));if(!file.startsWith(site+sep))throw Error();res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.wasm')?'application/wasm':'text/html');res.end(await readFile(file))}catch{res.writeHead(404);res.end()}})
+ server=createServer(async(req,res)=>{try{const path=new URL(req.url,'http://fixture').pathname,file=resolve(site,'.'+(path==='/'?'/index.html':path));if(!file.startsWith(site+sep))throw Error();if(path.endsWith('hand_landmarker.task'))await new Promise(done=>setTimeout(done,1800));res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.wasm')?'application/wasm':'text/html');res.end(await readFile(file))}catch{res.writeHead(404);res.end()}})
  await new Promise(done=>server.listen(0,'127.0.0.1',done))
  for(const engine of [chromium,webkit]){
   const browser=await engine.launch(engine===chromium?{channel:'msedge',headless:true}:{headless:true})
@@ -52,7 +52,7 @@ try{
      };
     },{unsupported})
     const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>window.ready)
-    await page.evaluate(()=>window.start());await page.waitForFunction(()=>window.waveCount>=2,{},{timeout:30000});assert.deepEqual(await page.evaluate(()=>window.failures),[]);assert.deepEqual(errors,[])
+    await page.evaluate(()=>window.start());assert.equal(await page.evaluate(()=>window.cameraReadyCalls),1);assert.ok(await page.evaluate(()=>window.trackingReadyAt-window.cameraReadyAt>1000),'Camera-ready callback fires before the slow model download finishes');await page.waitForFunction(()=>window.waveCount>=2,{},{timeout:30000});assert.deepEqual(await page.evaluate(()=>window.failures),[]);assert.deepEqual(errors,[])
     if(unsupported)assert.equal(await page.evaluate(()=>window.workerFallbacks),1)
     else if(engine===chromium)assert.equal(await page.evaluate(()=>window.workerFallbacks),0,'Explicit worker canvas bypasses the Safari UA guard')
     assert.ok(await page.evaluate(()=>window.workerFallbackReasons.every(reason=>!/document/.test(reason))),'Worker never tries to create a DOM canvas')

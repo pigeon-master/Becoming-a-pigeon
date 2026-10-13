@@ -192,9 +192,9 @@ export function createWorld(container: HTMLElement) {
   const birds: Pigeon[] = []
   const behaviors = createPigeonBehaviors(scene, birds)
   let visit: ReturnType<typeof createPoodleVisit> | ReturnType<typeof createCarVisit> | ReturnType<typeof createWizardVisit> | undefined
-  const releaseWizard=async()=>{
-    if(visit||removing.size)return
-    await loadWizardPhotos();if(visit||removing.size)return
+  const releaseWizard=async(signal?:AbortSignal)=>{
+    if(visit||removing.size||signal?.aborted)return
+    await loadWizardPhotos();if(visit||removing.size||signal?.aborted)return
     behaviors.cancel();controls.enabled=false
     const maxDistance=controls.maxDistance;controls.maxDistance=1000
     return new Promise<void>(resolve=>{
