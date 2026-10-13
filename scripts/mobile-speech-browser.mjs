@@ -1,5 +1,5 @@
 import {build} from 'vite'
-import {chromium,webkit} from '@playwright/test'
+import {chromium,webkit,firefox} from '@playwright/test'
 import {createServer} from 'node:http'
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises'
 import {resolve,sep} from 'node:path'
@@ -20,10 +20,10 @@ try{
  await build({configFile:false,root,publicDir:false,logLevel:'error',define:{'import.meta.env.VITE_STORAGE_MODE':JSON.stringify('supabase')},build:{outDir:resolve(root,'site')}})
  const site=resolve(root,'site');server=createServer(async(req,res)=>{try{const path=new URL(req.url,'http://fixture').pathname,file=resolve(site,'.'+(path==='/'?'/index.html':path));if(!file.startsWith(site+sep))throw Error();res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':'text/html');res.end(await readFile(file))}catch{res.writeHead(404);res.end()}})
  await new Promise(done=>server.listen(0,'127.0.0.1',done))
- for(const engine of [chromium,webkit]){
+ for(const engine of [chromium,webkit,firefox]){
   const browser=await engine.launch(engine===chromium?{channel:'msedge',headless:true}:{headless:true})
   try{
-   const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true}),errors=[];page.on('pageerror',e=>errors.push(e.message))
+   const page=await browser.newPage({viewport:{width:390,height:844},isMobile:engine===firefox?undefined:true,hasTouch:true}),errors=[];page.on('pageerror',e=>errors.push(e.message))
    await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>!!window.reset)
    const input=page.locator('#speech-input')
    // Safari-style Korean: no composition events, and a keyboard revises the

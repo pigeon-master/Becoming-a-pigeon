@@ -9,20 +9,22 @@ export interface FlockBody {
   radius: number
 }
 const sameHeight = (a: FlockBody, b: FlockBody) => Math.abs(a.position.y - b.position.y) < PIGEON_HEIGHT
+const steerAway=new Vector3(),steerRelative=new Vector3(),steerRight=new Vector3()
+const contactNormal=new Vector3(),contactRelative=new Vector3()
 
-export function steerAround(body: FlockBody, others: FlockBody[], desired: Vector3) {
-  const steering = desired.clone()
+export function steerAround(body: FlockBody, others: FlockBody[], desired: Vector3, output=new Vector3()) {
+  const steering = output.copy(desired)
   for (const other of others) {
     if (body === other || !sameHeight(body, other)) continue
-    const away = body.position.clone().sub(other.position); away.y = 0
+    const away = steerAway.copy(body.position).sub(other.position); away.y = 0
     const distance = away.length(), spacing = body.radius + other.radius
     if (distance < .00001 || distance > spacing + 2) continue
     const normal = away.divideScalar(distance)
-    const approach = desired.clone().sub(other.velocity).dot(normal)
+    const approach = steerRelative.copy(desired).sub(other.velocity).dot(normal)
     if (approach >= 0 && distance > spacing + .1) continue
     const strength = Math.max(0, 1 - (distance - spacing) / 2)
     // Each bird passes on its own right, avoiding head-on left/right oscillation.
-    const right = new Vector3(normal.z, 0, -normal.x)
+    const right = steerRight.set(normal.z, 0, -normal.x)
     steering.addScaledVector(normal, strength * 1.7)
     steering.addScaledVector(right, strength * 1.25)
   }
@@ -37,7 +39,7 @@ export function resolveContacts(bodies: FlockBody[], passes = 20) {
     for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
       const a = bodies[i], b = bodies[j]
       if (!sameHeight(a, b)) continue
-      const normal = a.position.clone().sub(b.position); normal.y = 0
+      const normal = contactNormal.copy(a.position).sub(b.position); normal.y = 0
       const distance = normal.length(), spacing = a.radius + b.radius
       if (distance >= spacing) continue
       penetration = Math.max(penetration, spacing - distance)
@@ -45,7 +47,7 @@ export function resolveContacts(bodies: FlockBody[], passes = 20) {
       else normal.set(Math.cos((i + j * 7) * 2.4), 0, Math.sin((i + j * 7) * 2.4))
       const correction = (spacing - distance + .0001) * .5
       a.position.addScaledVector(normal, correction); b.position.addScaledVector(normal, -correction)
-      const closing = a.velocity.clone().sub(b.velocity).dot(normal)
+      const closing = contactRelative.copy(a.velocity).sub(b.velocity).dot(normal)
       if (closing < 0) {
         const impulse = -closing * .6
         a.velocity.addScaledVector(normal, impulse); b.velocity.addScaledVector(normal, -impulse)

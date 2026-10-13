@@ -84,7 +84,7 @@ export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:Hand
   if(!navigator.mediaDevices?.getUserMedia)throw new Error('카메라는 HTTPS 환경의 지원 브라우저에서 사용할 수 있어요.')
   let stopped=false,busy=false,timer:ReturnType<typeof setTimeout>|undefined,conductor:ConductorState|undefined,interval=83,frameStarted=0,lastVideoTime=-1,inferenceCost=0
   let worker:Worker|undefined
-  try{worker=new Worker(new URL('./hand-worker.ts',import.meta.url))}catch{/* Use compatibility mode after camera permission. */}
+  try{if(typeof createImageBitmap==='function')worker=new Worker(new URL('./hand-worker.ts',import.meta.url))}catch{/* Use compatibility mode after camera permission. */}
   let mainTask:HandLandmarker|undefined,fallbackStarted=false,initRequested=false
   const capture=document.createElement('canvas'),base=new URL(import.meta.env.BASE_URL,location.href).href
   let stream:MediaStream|undefined

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { Pigeon } from './world'
 import type { HandWave } from './hand-tracking'
+import type { FlockBody } from './flock-physics'
 import { createWizard } from './wizard'
 import { resolveContacts } from './flock-physics'
 
@@ -60,6 +61,9 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
   const anchor=new THREE.Vector3(),screen=new THREE.Vector3(),correction=new THREE.Vector3()
   const beforeControl:THREE.Vector3[]=[],viewForward=new THREE.Vector3()
   const projectionView=new THREE.Matrix4(),clipFrom=new THREE.Vector4(),clipTo=new THREE.Vector4()
+  const activeFrame:Pigeon[]=[],bodyFrame:FlockBody[]=[]
+  const groupGoal=new THREE.Vector3(),flockCenter=new THREE.Vector3(),birdGoal=new THREE.Vector3(),patternRay=new THREE.Vector3(),stepVelocity=new THREE.Vector3()
+  const innerSafe=new THREE.Vector3(),standingSafe=new THREE.Vector3(),pairDelta=new THREE.Vector3(),movementDelta=new THREE.Vector3(),previousAnchor=new THREE.Vector3(),frameProjection=new THREE.Vector3()
   const clipToward=(point:THREE.Vector3,safe:THREE.Vector3,xLimit:number,yLow:number,yHigh:number)=>{
     clipFrom.set(point.x,point.y,point.z,1).applyMatrix4(projectionView)
     clipTo.set(safe.x,safe.y,safe.z,1).applyMatrix4(projectionView)
@@ -71,7 +75,7 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
     cut(a.z+a.w,b.z+b.w);cut(a.w-a.z,b.w-b.z)
     point.lerp(safe,Math.min(1,amount+1e-5))
   }
-  const inside=(point:THREE.Vector3)=>{const p=point.clone().project(camera);return p.z>-1&&p.z<1&&Math.abs(p.x)<=.8&&p.y>=-.76&&p.y<=.72}
+  const inside=(point:THREE.Vector3)=>{const p=frameProjection.copy(point).project(camera);return p.z>-1&&p.z<1&&Math.abs(p.x)<=.8&&p.y>=-.76&&p.y<=.72}
   const keepInFrame=(bird:Pigeon)=>{
     // Apply after separation too: collisions and vortex spacing can push a
     // bird past its destination. Leave room for its head and flapping wings.
@@ -81,7 +85,7 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
       const x=THREE.MathUtils.clamp(screen.x,-.8,.8),y=THREE.MathUtils.clamp(screen.y,-.76,.72)
       if(x===screen.x&&y===screen.y)break
       if(!patternActive){
-        const safe=new THREE.Vector3(standing.x,anchor.y,standing.z)
+        const safe=standingSafe.set(standing.x,anchor.y,standing.z)
         screen.copy(anchor);clipToward(screen,safe,.8,-.76,.72)
       }else screen.set(x,y,screen.z).unproject(camera)
       correction.copy(screen).sub(anchor)
@@ -154,15 +158,16 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
         const airborne=wave.strength>.2&&wave.y>.15
         flightHeight=THREE.MathUtils.damp(flightHeight,airborne?2+wave.y*8:0,airborne?4:3,dt)
         if(flightHeight<.035)flightHeight=0
-        const active=birds.filter(bird=>bird.root.visible&&initial.has(bird.id))
-        const bodies=active.map(bird=>bird.physics)
+        const active=activeFrame,bodies=bodyFrame;active.length=0;bodies.length=0
+        for(const bird of birds)if(bird.root.visible&&initial.has(bird.id)){active.push(bird);bodies.push(bird.physics)}
         active.forEach((bird,i)=>{(beforeControl[i]??=new THREE.Vector3()).copy(bird.root.position)})
         camera.getWorldDirection(viewForward)
         const viewDepth=camera.position.distanceTo(viewTarget)
         const halfWidth=viewDepth*Math.tan(THREE.MathUtils.degToRad(camera.fov*.5))*camera.aspect
-        const groupGoal=standing.clone().addScaledVector(right,wave.x*halfWidth*.6).addScaledVector(forward,(wave.y-(wave.depth??0)*1.8)*Math.min(6,viewDepth*.18)).setY(flightHeight+1)
-        clipToward(groupGoal,standing.clone().setY(groupGoal.y),.7,-.65,.68)
-        const flockCenter=active.length?active.reduce((sum,bird)=>sum.add(bird.root.position),new THREE.Vector3()).divideScalar(active.length).setY(0):center
+        groupGoal.copy(standing).addScaledVector(right,wave.x*halfWidth*.6).addScaledVector(forward,(wave.y-(wave.depth??0)*1.8)*Math.min(6,viewDepth*.18)).setY(flightHeight+1)
+        clipToward(groupGoal,standingSafe.copy(standing).setY(groupGoal.y),.7,-.65,.68)
+        flockCenter.set(0,0,0);for(const bird of active)flockCenter.add(bird.root.position)
+        if(active.length)flockCenter.divideScalar(active.length).setY(0);else flockCenter.copy(center)
         const vortex=time<vortexUntil
         const flourish=!vortex&&(wave.flourish??0)>.2&&wave.strength>.2
         patternActive=vortex||flourish
@@ -177,17 +182,17 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
             const patternY=vortex?-.68+layer*1.37+Math.sin(angle*1.3+index)*.07:-.12+Math.sin(layer*Math.PI*3-time*2.1)*(.24+scatter*.16)+(layer-.5)*.3
             const screenX=THREE.MathUtils.clamp(patternX*(1-.35*Math.abs(wave.x))+wave.x*.42,-.8,.8)
             const screenY=THREE.MathUtils.clamp(patternY*(1-.18*Math.abs(wave.y))+wave.y*.28,-.72,.7)
-            const ray=new THREE.Vector3(screenX,screenY,.5).unproject(camera).sub(camera.position).normalize()
+            const ray=patternRay.set(screenX,screenY,.5).unproject(camera).sub(camera.position).normalize()
             const depth=viewDepth*Math.max(.25,.42+layer*.52+Math.sin(angle)*.07-(wave.depth??0)*.1)
-            const destination=camera.position.clone().addScaledVector(ray,depth/Math.max(.1,ray.dot(viewForward)))
+            const destination=birdGoal.copy(camera.position).addScaledVector(ray,depth/Math.max(.1,ray.dot(viewForward)))
             destination.y=Math.max(1.5,destination.y)
-            const velocity=destination.clone().sub(bird.root.position);bird.root.position.lerp(destination,1-Math.exp(-dt*7))
+            const velocity=stepVelocity.copy(destination).sub(bird.root.position);bird.root.position.lerp(destination,1-Math.exp(-dt*7))
             bird.root.rotation.y=Math.atan2(velocity.x,velocity.z);bird.root.rotation.z=vortex?-.3:Math.sin(time*3+index*.4)*.25;bird.velocity.set(0,0,0);bird.flightDuration=0;bird.settle=0;bird.timer=1000
             bird.torso.rotation.x=-.18;bird.head.position.set(0,1.57,.6);bird.wings.forEach((wing,i)=>{wing.rotation.z=(i?-1:1)*(1.2+Math.sin(time*29+index*.5)*.75);wing.scale.y=2.2});bird.legs.forEach(leg=>leg.rotation.x=-.9);bird.updateNeck()
             continue
           }
           const angle=index*2.399963+Math.sin(time*.45+index)*.14,radius=Math.sqrt(index+.5)*(flightHeight>.1?1.35:1.8)
-          const destination=groupGoal.clone().addScaledVector(right,Math.cos(angle)*radius*(1-.3*Math.abs(wave.x))).addScaledVector(forward,Math.sin(angle)*radius*(flightHeight>.1?.75:1.15)).setY(bird.root.position.y+1)
+          const destination=birdGoal.copy(groupGoal).addScaledVector(right,Math.cos(angle)*radius*(1-.3*Math.abs(wave.x))).addScaledVector(forward,Math.sin(angle)*radius*(flightHeight>.1?.75:1.15)).setY(bird.root.position.y+1)
           const strength=wave.strength>.06?wave.strength:0
           let idlePace=0
           if(!strength){
@@ -203,10 +208,10 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
           }else idleSteps.delete(bird.id)
           // Each bird curves toward its own inner destination before reaching
           // the viewport edge; the safety boundary no longer acts as a wall.
-          const limit=.74+.04*Math.sin(index*1.73),p=destination.clone().project(camera)
+          const limit=.74+.04*Math.sin(index*1.73),p=screen.copy(destination).project(camera)
           if(Math.abs(p.x)>limit||p.y<-.68||p.y>.66){
-            const safe=groupGoal.clone().setY(destination.y)
-            clipToward(safe,standing.clone().setY(destination.y),limit,-.68,.66)
+            const safe=innerSafe.copy(groupGoal).setY(destination.y)
+            clipToward(safe,standingSafe.copy(standing).setY(destination.y),limit,-.68,.66)
             clipToward(destination,safe,limit,-.68,.66)
           }
           destination.y=bird.root.position.y
@@ -223,7 +228,7 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
         }
         if(!patternActive&&flightHeight<.1)resolveContacts(bodies,3)
         if(patternActive||flightHeight>=.1)for(let i=0;i<active.length;i++)for(let j=i+1;j<active.length;j++){
-          const delta=active[j].root.position.clone().sub(active[i].root.position)
+          const delta=pairDelta.copy(active[j].root.position).sub(active[i].root.position)
           if(!patternActive)delta.y=0
           const distance=delta.length()
           if(distance<2&&distance>.001){delta.multiplyScalar((2-distance)*.5/distance);active[i].root.position.sub(delta);active[j].root.position.add(delta)}
@@ -231,9 +236,10 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
         if(patternActive)for(const bird of active)bird.root.position.y=Math.max(1.5,bird.root.position.y)
         for(const [index,bird]of active.entries()){
           keepInFrame(bird)
-          const previous=beforeControl[index],movement=bird.root.position.clone().sub(previous)
+          const previous=beforeControl[index],movement=movementDelta.copy(bird.root.position).sub(previous)
           const limit=(patternActive?40:14)*dt
-          if(movement.length()>limit&&inside(previous.clone().add(new THREE.Vector3(0,1,0)))){
+          previousAnchor.copy(previous).y+=1
+          if(movement.length()>limit&&inside(previousAnchor)){
             bird.root.position.copy(previous).add(movement.clampLength(0,limit))
           }
           bird.velocity.clampLength(0,14)

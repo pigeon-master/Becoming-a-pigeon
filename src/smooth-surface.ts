@@ -23,8 +23,8 @@ export function createSmoothSurface(min: THREE.Vector3, max: THREE.Vector3, dist
   marching.update()
   const count = marching.geometry.drawRange.count
   const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(Array.from(marching.geometry.getAttribute('position').array.slice(0, count * 3)), 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from(marching.geometry.getAttribute('normal').array.slice(0, count * 3)), 3))
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(marching.geometry.getAttribute('position').array.subarray(0, count * 3), 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(marching.geometry.getAttribute('normal').array.subarray(0, count * 3), 3))
   geometry.scale(extent.x / 2, extent.y / 2, extent.z / 2); geometry.translate(center.x, center.y, center.z)
   geometry.normalizeNormals()
   marching.geometry.dispose(); material.dispose()
@@ -47,8 +47,9 @@ export function bindSmoothSurface(mesh: THREE.Mesh, nodes: THREE.Object3D[], inf
   const lastTransforms=nodes.map(()=>new THREE.Matrix4()),nextTransform=new THREE.Matrix4()
   let initialized=false
   mesh.frustumCulled = false
-  return () => {
-    parent.updateWorldMatrix(true, true); parentInverse.copy(parent.matrixWorld).invert()
+  return (matricesCurrent=false) => {
+    if(!matricesCurrent)parent.updateWorldMatrix(true, true)
+    parentInverse.copy(parent.matrixWorld).invert()
     let changed=!initialized
     nodes.forEach((node,i)=>{
       nextTransform.multiplyMatrices(parentInverse,node.matrixWorld).multiply(inverseBind[i])

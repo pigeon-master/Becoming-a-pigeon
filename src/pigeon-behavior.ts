@@ -74,6 +74,7 @@ export function createPigeonBehaviors(scene: THREE.Scene, birds: Pigeon[], rando
       else for (const action of [...actions]) finish(action)
     },
     get summary() { return { actions: [...actions].map(action => ({ kind: action.kind, ids: action.birds.map(b => b.id) })), droppings: droppings.length } },
+    get animated(){return actions.size>0||droppings.length>0||hearts.length>0},
     update(dt: number, allowNew: boolean, excluded: (bird: Pigeon) => boolean = () => false) {
       if (allowNew) matingCooldown = Math.max(0, matingCooldown - dt)
       for (const [bird, remaining] of matingRest) {

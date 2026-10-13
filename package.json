@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:compatibility": "node scripts/compatibility-browser.mjs",
     "test:wizard": "node scripts/wizard-browser.mjs",
     "test:human": "node scripts/human-browser.mjs",
     "test:supabase": "node --test scripts/supabase.test.mjs",

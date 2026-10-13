@@ -448,7 +448,7 @@ export function createHuman(projection?: { atlas: THREE.Texture; front: THREE.Ve
         legs[0].hip.rotation.x=-.15*hanging;legs[0].knee.rotation.x=.3*hanging
       }
       deformUpperBody()
-      deformPants?.()
+      deformPants?.(true)
     },
     dispose() { root.removeFromParent(); projected.forEach(geometry => geometry.dispose()); for (const geometry of [sphere, faceGeometry, shirtGeometry, upperBodyGeometry, trouserGeometry, shinGeometry, upperSleeveGeometry, lowerSleeveGeometry, neckGeometry, shoeGeometry, ...handGeometries, bagGeometry, pocketGeometry, zipperGeometry, strapGeometry]) geometry.dispose(); pantsGeometry?.dispose();pelvisMaterial?.dispose();Object.values(materials).forEach(material => material.dispose()); neckMaterial.dispose(); handMaterial.dispose(); bagMaterial.dispose(); zipperMaterial.dispose() },
   }

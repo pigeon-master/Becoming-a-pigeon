@@ -18,9 +18,12 @@ const sphere = new THREE.SphereGeometry(1, 20, 14)
 const bodyMat = material(0x899095), wingMat = material(0x697278), darkMat = material(0x30383d)
 const neckMat = new THREE.MeshStandardMaterial({ color: 0x415d59, metalness: .35, roughness: .4 })
 const footMat = material(0xb16e72)
+const neckBase=new THREE.Vector3(0,1.01,.24),neckOffset=new THREE.Vector3(0,-.17,-.09),upAxis=new THREE.Vector3(0,1,0)
 function ellipsoid(parent: THREE.Object3D, mat: THREE.Material, scale: number[], position: number[]) {
   const mesh = new THREE.Mesh(sphere, mat)
   mesh.scale.set(scale[0], scale[1], scale[2]); mesh.position.set(position[0], position[1], position[2])
+  // Local transforms of feathers/body/toes are fixed; their parent groups move.
+  mesh.updateMatrix();mesh.matrixAutoUpdate=false
   mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh
 }
 function asphalt() {
@@ -57,14 +60,18 @@ export class Pigeon {
   settle = 3
   velocity = new THREE.Vector3()
   collisionCooldown = 0
-  get physics(): FlockBody { return { position: this.root.position, velocity: this.velocity, radius: PIGEON_RADIUS } }
+  private physicsBody:FlockBody={position:this.root.position,velocity:this.velocity,radius:PIGEON_RADIUS}
+  private neckTop=new THREE.Vector3();private neckDirection=new THREE.Vector3()
+  private moveDelta=new THREE.Vector3();private desiredVelocity=new THREE.Vector3();private steeringVelocity=new THREE.Vector3()
+  get physics(): FlockBody { this.physicsBody.velocity=this.velocity;return this.physicsBody }
   constructor(face: THREE.Mesh) {
     this.bubble.className = 'speech-bubble'; this.bubble.hidden = true
     this.face = face
     this.root.add(this.torso)
     ellipsoid(this.torso, bodyMat, [.46, .49, .72], [0, .76, -.1])
     this.neck = ellipsoid(this.torso, neckMat, [.28, .46, .3], [0, 1.13, .31])
-    const tail = ellipsoid(this.torso, darkMat, [.28, .085, .52], [0, .66, -.85]); tail.rotation.x = -.18
+    this.neck.matrixAutoUpdate=true
+    const tail = ellipsoid(this.torso, darkMat, [.28, .085, .52], [0, .66, -.85]); tail.rotation.x = -.18;tail.updateMatrix()
     this.head.position.set(0, 1.57, .38); this.torso.add(this.head)
     this.head.add(face)
     this.updateNeck()
@@ -77,7 +84,7 @@ export class Pigeon {
       const leg = new THREE.Group(); leg.position.set(s * .18, .38, 0); this.root.add(leg)
       ellipsoid(leg, footMat, [.032, .18, .032], [0, -.14, 0])
       for (let i = -1; i <= 1; i++) {
-        const toe = ellipsoid(leg, footMat, [.02, .022, .15], [i * .047, -.3, .085]); toe.rotation.y = i * .35
+        const toe = ellipsoid(leg, footMat, [.02, .022, .15], [i * .047, -.3, .085]); toe.rotation.y = i * .35;toe.updateMatrix()
       }
       this.legs.push(leg)
     }
@@ -97,12 +104,12 @@ export class Pigeon {
     // Body geometry and feather materials are shared by the remaining flock.
   }
   updateNeck() {
-    const base = new THREE.Vector3(0, 1.01, .24)
-    const top = this.head.position.clone().add(new THREE.Vector3(0, -.17, -.09))
-    const direction = top.clone().sub(base)
+    const base = neckBase
+    const top = this.neckTop.copy(this.head.position).add(neckOffset)
+    const direction = this.neckDirection.copy(top).sub(base)
     this.neck.position.copy(base).add(top).multiplyScalar(.5)
     this.neck.scale.set(.27, direction.length() * .5 + .2, .28)
-    this.neck.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize())
+    this.neck.quaternion.setFromUnitVectors(upAxis, direction.normalize())
   }
   fly() {
     if (this.flightDuration) return
@@ -124,10 +131,10 @@ export class Pigeon {
       if (Math.random() < .24) this.fly(); else this.chooseTarget()
       this.timer = rand(6, 16)
     }
-    const delta = this.target.clone().sub(this.root.position); delta.y = 0
-    const desired = delta.clone().normalize().multiplyScalar(this.flightDuration ? 3.2 : this.speed)
+    const delta = this.moveDelta.copy(this.target).sub(this.root.position); delta.y = 0
+    const desired = this.desiredVelocity.copy(delta).normalize().multiplyScalar(this.flightDuration ? 3.2 : this.speed)
     if (delta.length() < .2) desired.set(0, 0, 0)
-    const steering = steerAround(body, neighbors, desired)
+    const steering = steerAround(body, neighbors, desired,this.steeringVelocity)
     this.velocity.lerp(steering, 1 - Math.exp(-dt * 8))
     this.root.position.addScaledVector(this.velocity, dt)
     const angle = this.velocity.lengthSq() > .0001 ? Math.atan2(this.velocity.x, this.velocity.z) : this.root.rotation.y
@@ -170,6 +177,9 @@ export function createWorld(container: HTMLElement) {
   const camera = new THREE.PerspectiveCamera(48, 1, .1, 4000)
   camera.position.set(0, 4, 14)
   const controls = new OrbitControls(camera, renderer.domElement)
+  let renderDirty=true,lastSceneDynamic=false
+  controls.addEventListener('change',()=>{renderDirty=true})
+  renderer.domElement.addEventListener('webglcontextrestored',()=>{renderDirty=true;renderer.shadowMap.needsUpdate=true})
   controls.target.set(0, 1, 0); controls.enableDamping = false; controls.minDistance = 4; controls.maxDistance = 28
   const bubbleHideDistance = 23, bubbleShowDistance = 21
   let bubblesVisibleAtZoom = true
@@ -383,10 +393,14 @@ export function createWorld(container: HTMLElement) {
     return true
   }
   const observer = new ResizeObserver(() => {
+    renderDirty=true
     renderer.setSize(container.clientWidth, container.clientHeight)
     camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix()
   }); observer.observe(container)
   let paused = matchMedia('(prefers-reduced-motion: reduce)').matches
+  const activeFrame:Pigeon[]=[],collidableFrame:Pigeon[]=[],contactFrame:FlockBody[]=[],snapshotFrame:FlockBody[]=[],snapshotPool:FlockBody[]=[]
+  const bubbleAnchor=new THREE.Vector3()
+  let lastBehaviorText='',lastDroppingCount=-1
   let last = performance.now(), time = 0, lastWizardShadow = -Infinity
   renderer.setAnimationLoop(now => {
     const dt = Math.min((now - last) / 1000, .05); last = now
@@ -394,22 +408,29 @@ export function createWorld(container: HTMLElement) {
     if (!paused && !document.hidden) {
       behaviors.update(dt, !visit, bird => removing.has(bird.id) || !!visit?.owns(bird.id))
       const summary = behaviors.summary
-      container.dataset.pigeonBehaviors = JSON.stringify(summary.actions)
-      container.dataset.droppingCount = String(summary.droppings)
+      const behaviorText=JSON.stringify(summary.actions)
+      if(behaviorText!==lastBehaviorText){container.dataset.pigeonBehaviors=behaviorText;lastBehaviorText=behaviorText}
+      if(summary.droppings!==lastDroppingCount){container.dataset.droppingCount=String(summary.droppings);lastDroppingCount=summary.droppings}
       // Small substeps prevent a fast flyer from tunnelling through a neighbor.
       const steps = Math.max(1, Math.ceil(dt / (1 / 60))), step = dt / steps
       for (let i = 0; i < steps; i++) {
         time += step
-        const active = birds.filter(i => !removing.has(i.id) && !visit?.owns(i.id))
-        const snapshot = active.map(i => ({ position: i.root.position.clone(), velocity: i.velocity.clone(), radius: PIGEON_RADIUS }))
+        const active=activeFrame,snapshot=snapshotFrame;active.length=0;snapshot.length=0
+        for(const bird of birds)if(!removing.has(bird.id)&&!visit?.owns(bird.id)){
+          const index=active.length,body=snapshotPool[index]??= {position:new THREE.Vector3(),velocity:new THREE.Vector3(),radius:PIGEON_RADIUS}
+          body.position.copy(bird.root.position);body.velocity.copy(bird.velocity);active.push(bird);snapshot.push(body)
+        }
         active.forEach((i, index) => { if (!behaviors.owns(i)) i.update(step, time, snapshot[index], snapshot) })
         // A mounted pair intentionally shares a footprint; its lower bird represents it.
-        const collidable = active.filter(i => !behaviors.mounted(i))
-        const contacts = resolveContacts(collidable.map(i => i.physics))
+        const collidable=collidableFrame;collidable.length=0;contactFrame.length=0
+        for(const bird of active)if(!behaviors.mounted(bird)){collidable.push(bird);contactFrame.push(bird.physics)}
+        const contacts = resolveContacts(contactFrame)
         contacts.forEach((normal, index) => { if (!behaviors.owns(collidable[index])) collidable[index].collide(normal) })
       }
     }
     effects.forEach(animate => animate(now))
+    // Preserve background effect completion without submitting invisible GPU work.
+    if(document.hidden)return
     // Include offscreen arrivals and their ground shadows before they enter view.
     // Grow in fixed steps without shrinking during a visit to avoid a moving seam.
     let requiredExtent = shadowExtent
@@ -448,6 +469,9 @@ export function createWorld(container: HTMLElement) {
       }
     }
     const wizardActive=!!visit&&'command' in visit
+    const sceneDynamic=birds.length>0||!!visit||effects.size>0||behaviors.animated
+    if(!sceneDynamic&&!renderDirty&&!lastSceneDynamic)return
+    lastSceneDynamic=sceneDynamic;renderDirty=false
     renderer.shadowMap.autoUpdate=!wizardActive
     if(wizardActive&&now-lastWizardShadow>=50){renderer.shadowMap.needsUpdate=true;lastWizardShadow=now}
     renderer.render(scene, camera)
@@ -455,11 +479,11 @@ export function createWorld(container: HTMLElement) {
     // Separate thresholds prevent flickering while wheel damping settles.
     if (viewDistance >= bubbleHideDistance) bubblesVisibleAtZoom = false
     else if (viewDistance <= bubbleShowDistance) bubblesVisibleAtZoom = true
-    const anchor = new THREE.Vector3()
+    const anchor = bubbleAnchor
     for (const bird of birds) {
       if (visit || container.dataset.visitorActive === 'true' || !bubblesVisibleAtZoom || !bird.root.visible || !bird.bubble.textContent) { bird.bubble.hidden = true; continue }
       // Project the animated head, including head-bobbing and flight, each frame.
-      bird.head.getWorldPosition(anchor); anchor.y += .56; anchor.project(camera)
+      anchor.setFromMatrixPosition(bird.head.matrixWorld); anchor.y += .56; anchor.project(camera)
       bird.bubble.hidden = anchor.z < -1 || anchor.z > 1 || Math.abs(anchor.x) > .97 || Math.abs(anchor.y) > .97
       const margin = Math.min(140, container.clientWidth / 2)
       const x = THREE.MathUtils.clamp((anchor.x + 1) * container.clientWidth / 2, margin, container.clientWidth - margin)
