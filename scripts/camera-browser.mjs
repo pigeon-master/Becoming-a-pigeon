@@ -10,7 +10,9 @@ const temporary=await mkdtemp(resolve(artifacts,'camera-check-'))
 let browser,server
 try {
   await writeFile(resolve(temporary,'index.html'),'<body style="margin:0"><main id="world" style="position:fixed;inset:0"></main><script type="module" src="/fixture.ts"></script>')
+  await writeFile(resolve(temporary,'fixture.css'),(await readFile(resolve('src/style.css'),'utf8')).replace(/@font-face\{[^}]+\}/g,''));
   await writeFile(resolve(temporary,'fixture.ts'),`
+    import './fixture.css';
     import * as THREE from 'three';
     import {createWorld} from ${JSON.stringify(resolve('src/world.ts').replaceAll('\\','/'))};
     const add=THREE.Scene.prototype.add;
@@ -25,7 +27,7 @@ try {
     const world=createWorld(document.getElementById('world'));
     for(let i=0;i<40;i++){
       const face=new THREE.Mesh(new THREE.SphereGeometry(.25,8,6),new THREE.MeshStandardMaterial({color:0x888888}));
-      world.add(face,{id:String(i),focus:false});world.say(String(i),'Pigeon '+i);
+      world.add(face,{id:String(i),focus:false});world.say(String(i),i%3?'Pigeon '+i:'Hi');
     }
     window.ready=world.count===40;
     window.focusSpeech=id=>world.focusSpeech(id);
@@ -89,6 +91,18 @@ try {
     const speechPose=await page.evaluate(()=>window.viewPose)
     await page.waitForTimeout(400)
     assert.ok(await page.evaluate(pose=>window.viewPose.every((value,i)=>Math.abs(value-pose[i])<.00001),speechPose),'Speech focus stops when its short transition finishes')
+    const tailResult=await page.evaluate(async()=>{
+      const detached=[],inside=(x,y,w,h,r)=>{if(x<0||x>w||y<0||y>h)return false;if(y<=h-r||x>=r&&x<=w-r)return true;const cx=x<r?r:w-r;return (x-cx)**2+(y-(h-r))**2<=r*r+.1};
+      for(let frame=0;frame<12;frame++){
+        await new Promise(requestAnimationFrame);
+        for(const bubble of document.querySelectorAll('.speech-bubble:not([hidden])')){
+          const box=bubble.getBoundingClientRect(),style=getComputedStyle(bubble),tail=getComputedStyle(bubble,'::after');const left=parseFloat(tail.left),top=box.height-parseFloat(tail.bottom)-parseFloat(tail.borderTopWidth);const radius=Math.min(parseFloat(style.borderBottomLeftRadius),box.width/2,box.height/2);
+          if(!inside(left-6,top,box.width,box.height,radius)||!inside(left+6,top,box.width,box.height,radius))detached.push({left,top,w:box.width,h:box.height});
+        }
+      }
+      const bubble=document.querySelector('.speech-bubble:not([hidden])');if(!bubble)throw Error('No visible bubble to test');for(const offset of [-500,500]){bubble.style.setProperty('--tail-offset',offset+'px');const box=bubble.getBoundingClientRect(),tail=getComputedStyle(bubble,'::after'),radius=Math.min(28,box.width/2,box.height/2),left=parseFloat(tail.left),top=box.height-parseFloat(tail.bottom)-parseFloat(tail.borderTopWidth);if(!inside(left-6,top,box.width,box.height,radius)||!inside(left+6,top,box.width,box.height,radius))detached.push({offset,left,top})}return detached;
+    });assert.deepEqual(tailResult,[],'Tail base stays inside the rounded bubble during camera motion and extreme edge offsets');
+    await page.mouse.move(viewport.width/2,viewport.height/2);await page.mouse.down();await page.mouse.move(viewport.width/2+100,viewport.height/2-30,{steps:10});await page.mouse.up();
     await page.evaluate(()=>window.removeOne())
     await page.waitForFunction(()=>document.getElementById('world').dataset.removalPhase==='sinking')
     assert.ok(await page.evaluate(()=>window.hole.visible&&window.hole.children.length===4),'Deletion uses the black hole and its three rings')

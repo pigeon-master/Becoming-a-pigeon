@@ -6,13 +6,17 @@ scope.onmessage=async event=>{
   const data=event.data
   try{
     if(data.type==='init'){
+      // Explicitly pass a worker canvas. MediaPipe's Safari user-agent check
+      // can otherwise fall back to document.createElement inside this worker.
+      if(typeof OffscreenCanvas==='undefined')throw new Error('Worker OffscreenCanvas unavailable')
+      const canvas=new OffscreenCanvas(1,1)
       scope.importScripts(new URL('models/vision_bundle.js',data.base).href)
       const files=await scope.Vision.FilesetResolver.forVisionTasks(new URL('models/wasm',data.base).href)
-      task=await scope.Vision.HandLandmarker.createFromOptions(files,{baseOptions:{modelAssetPath:new URL('models/hand_landmarker.task',data.base).href,delegate:'CPU'},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.4,minHandPresenceConfidence:.4,minTrackingConfidence:.4})
+      task=await scope.Vision.HandLandmarker.createFromOptions(files,{canvas,baseOptions:{modelAssetPath:new URL('models/hand_landmarker.task',data.base).href,delegate:'CPU'},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.4,minHandPresenceConfidence:.4,minTrackingConfidence:.4})
       scope.postMessage({type:'ready'})
     }else if(data.type==='frame'){
       const start=performance.now()
       try{const result=task!.detectForVideo(data.bitmap,data.time);scope.postMessage({type:'result',landmarks:result.landmarks,handedness:result.handedness,cost:performance.now()-start,time:data.time})}finally{data.bitmap.close()}
     }
-  }catch(error){scope.postMessage({type:'error',message:error instanceof Error?error.message:String(error)})}
+  }catch(error){scope.postMessage({type:data.type==='init'?'fallback':'error',message:error instanceof Error?error.message:String(error)})}
 }

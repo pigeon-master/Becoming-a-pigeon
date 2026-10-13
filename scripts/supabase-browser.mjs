@@ -14,7 +14,7 @@ const source = file => JSON.stringify(resolve('src', file).replaceAll('\\', '/')
 let browser, server
 try {
   const styles=await readFile(resolve('src/style.css'),'utf8')
-  await writeFile(resolve(root,'fixture.css'), styles.match(/#action-bar\{[^}]+\}/)[0]+'\n'+styles.match(/#action-bar\[data-participation="empty"\]\{[^}]+\}/)[0])
+  await writeFile(resolve(root,'fixture.css'), styles.match(/#action-bar\{[^}]+\}/)[0]+'\n'+styles.match(/#action-bar\[data-participation="empty"\][^{]*\{[^}]+\}/)[0])
   await writeFile(resolve(root, 'index.html'), '<body><div id="action-bar" data-participation="loading"><button id="join">Become a Pigeon</button><button id="speak" hidden>Wanna Say Something?</button></div><button id="remove-pigeon" hidden>Remove</button><section id="speech-panel" hidden><input id="speech-input"><output id="speech-count"></output><button id="speech-close" aria-label="Save">↑</button><p id="speech-error" hidden></p></section><button id="outside">Outside</button><script type="module" src="/fixture.ts"></script>')
   await writeFile(resolve(root, 'fixture.ts'), `
     import './fixture.css';
@@ -206,8 +206,8 @@ try {
     await hangul.detach()
     await page.close()
   }
-  assert.equal(noiseSamples[0],noiseSamples[1],'Touch and desktop English input generate the same amount of noise')
-  assert.equal(hangulNoiseSamples[0],hangulNoiseSamples[1],'Touch and desktop Hangul input generate the same amount of noise')
+  assert.ok(noiseSamples[1]>0&&noiseSamples[1]<=noiseSamples[0],'Touch English generates noise on submission without exceeding desktop frequency')
+  assert.ok(hangulNoiseSamples[1]>0&&hangulNoiseSamples[1]<=hangulNoiseSamples[0],'Explicitly completed touch composition creates noise at desktop-like cadence')
   assert.deepEqual(errors, [])
   console.log('PASS: ownership, Enter/arrow/outside saves, native Hangul completion, public reads, reload and failed-save retry.')
 } finally {

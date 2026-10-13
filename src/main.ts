@@ -1,14 +1,16 @@
 import './style.css'
+import './korean-font.css'
 import { createWorld } from './world'
 import { connectFlock } from './shared-flock'
 import { createSpeech } from './speech'
 import { SUPABASE_STORAGE } from './storage-mode'
 import { createFace } from './face'
 import { startHandTracking } from './hand-tracking'
+import { readOwners } from './ownership'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <p id="copyright"><span class="wide-text">ⓒ2026. CRAPPYROOM.</span></p>
-<main id="world" aria-label="비둘기 광장"></main><div id="action-bar" data-participation="loading"><button id="join">Become a Pigeon</button><button id="speak" aria-controls="speech-panel" aria-expanded="false" hidden>Wanna Say Something?</button></div><p id="world-error" role="alert" hidden></p>
+<main id="world" aria-label="비둘기 광장"></main><div id="action-bar" data-participation="loading" data-returning-owner="${readOwners().size>0}"><button id="join">Become a Pigeon</button><button id="speak" aria-controls="speech-panel" aria-expanded="false" hidden>Wanna Say Something?</button><p id="desktop-recommendation"><span class="wide-text">Desktop recommended.</span><br><span lang="ko">PC 접속을 권장합니다.</span></p></div><p id="world-error" role="alert" hidden></p>
 <section id="speech-panel" aria-label="비둘기 말풍선 입력" hidden><div class="speech-input-row"><input id="speech-input" type="text" aria-label="말풍선 내용, 직접 입력한 문자와 공백 50자. 자동 문자는 제외" placeholder="Say something…" autocomplete="off" spellcheck="false"><output id="speech-count" for="speech-input">0 / 50</output><button id="speech-close" aria-label="말풍선 저장하고 입력 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button></div><p id="speech-error" role="status" hidden></p></section>
 <button id="remove-pigeon" class="text-button" aria-label="Remove Your Pigeon" hidden><svg viewBox="3 3 43 57" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 12 21 5Q25 4 30 5L34 12M6 15Q8 11 15 12L38 12Q45 12 45 19L5 20Q4 16 6 15ZM9 20 12 58Q25 59 38 58L41 20M18 29 19 48M25 28 25 49M33 29 32 49"/></svg></button>
 <button id="poodle" aria-label="치와와 뛰어놀기"><svg viewBox="1 6 82 52" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M28 30C25 22 40 20 51 21C66 19 77 25 74 33C77 40 60 44 48 41C34 44 25 38 28 29"/><path d="M30 22C32 31 25 36 15 32C7 30 7 22 11 18C17 12 28 14 30 22ZM21 15 27 8 29 21"/><circle cx="17" cy="23" r="1.6" fill="currentColor" stroke="none"/><path d="M10 24C7 23 3 24 3 27C3 30 7 31 10 29Z" fill="currentColor" stroke="none"/><path d="M73 30Q81 27 79 19M35 40 33 55M44 42 44 56M59 42 57 56M69 39 70 54"/></svg></button>
@@ -44,9 +46,9 @@ let deleting = false
 let poodleRunning = false
 let wizardAbort:AbortController|undefined,wizardTracking:Awaited<ReturnType<typeof startHandTracking>>|undefined
 let wizardSessionTimer:ReturnType<typeof setTimeout>|undefined
-const stopWizardCamera=()=>{clearTimeout(wizardSessionTimer);wizardAbort?.abort();wizardTracking?.stop();wizardTracking=undefined;el('magic-camera').hidden=true}
-el('world').addEventListener('wizardcontrolstart',()=>{clearTimeout(wizardSessionTimer);wizardSessionTimer=setTimeout(()=>{stopWizardCamera();world?.stopWizard()},60000)})
-el('magic-stop').onclick=()=>{stopWizardCamera();world?.stopWizard()}
+const stopWizardCamera=()=>{clearTimeout(wizardSessionTimer);wizardAbort?.abort();wizardTracking?.stop();wizardTracking=undefined;el('magic-camera').hidden=true;el('magic-stop').hidden=true}
+el('world').addEventListener('wizardcontrolstart',()=>{if(!el('magic-camera').hidden)el('magic-stop').hidden=false;clearTimeout(wizardSessionTimer);wizardSessionTimer=setTimeout(()=>{stopWizardCamera();world?.stopWizard()},60000)})
+el('magic-stop').onclick=()=>{if(el('magic-stop').hidden)return;stopWizardCamera();world?.stopWizard()}
 el('world').addEventListener('wizardtrackingend',stopWizardCamera)
 window.addEventListener('pagehide',stopWizardCamera)
 for (const visitor of ['poodle', 'human', 'car', 'wizard']) el(visitor).onclick = async () => {
@@ -55,7 +57,7 @@ for (const visitor of ['poodle', 'human', 'car', 'wizard']) el(visitor).onclick 
   for (const id of ['poodle', 'human', 'car', 'wizard', 'join', 'speak', 'remove-pigeon']) el<HTMLButtonElement>(id).disabled = true
   try {
     if(visitor==='wizard'){
-      wizardAbort=new AbortController();el('magic-camera').hidden=false;el('magic-loading').hidden=false
+      wizardAbort=new AbortController();el('magic-stop').hidden=true;el('magic-camera').hidden=false;el('magic-loading').hidden=false
       wizardTracking=await startHandTracking(el<HTMLVideoElement>('magic-video'),wave=>world?.wizardWave(wave),error=>{if(!wizardAbort?.signal.aborted){el('world-error').textContent=error.message;el('world-error').hidden=false;stopWizardCamera();world?.stopWizard()}},wizardAbort.signal)
       if(wizardAbort.signal.aborted){wizardTracking.stop();return}
       el('magic-loading').hidden=true

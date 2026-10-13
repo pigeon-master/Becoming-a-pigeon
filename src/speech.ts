@@ -12,7 +12,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   const removeButton = document.getElementById('remove-pigeon') as HTMLButtonElement
   const panel = document.getElementById('speech-panel')!
   const input = document.getElementById('speech-input') as HTMLInputElement
-  const touchInput = matchMedia('(pointer: coarse)').matches
+  const touchInput = matchMedia('(any-pointer: coarse)').matches
   input.setAttribute('autocorrect', 'off'); input.setAttribute('autocapitalize', 'off')
   const counter = document.getElementById('speech-count')!
   const error = document.getElementById('speech-error')!
@@ -21,23 +21,24 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   let chars: SpeechChar[] = [], edit: SpeechEdit | undefined
   let resumeNoise = false
   let noiseStarted = false
-  let noiseProgress = 0, noiseInterval = 7 + Math.floor(Math.random() * 4), noiseDue = false
+  const nextNoiseInterval=()=>touchInput?6+Math.floor(Math.random()*3):7+Math.floor(Math.random()*4)
+  let noiseProgress = 0, noiseInterval = nextNoiseInterval(), noiseDue = false
   let submitPending = false
   let focusAfterSubmit = false
   let enterHeld = false
   let compositionTimer: ReturnType<typeof setTimeout>, saveTimer: ReturnType<typeof setTimeout>, submitTimer: ReturnType<typeof setTimeout>
-  let noiseTimer: ReturnType<typeof setTimeout>
+  let noiseTimer: ReturnType<typeof setTimeout>, previewTimer: ReturnType<typeof setTimeout> | undefined
   let saves = Promise.resolve()
   const count = () => { counter.textContent = `${humanCount(chars)} / ${SPEECH_LIMIT}` }
   const persist = () => {
     clearTimeout(saveTimer)
     if (!owner || composing || endingComposition) return
-    const target = { ...owner }, message = input.value, automatic = automaticIndices(chars)
+    const target = { ...owner }, message = speechValue(chars), automatic = automaticIndices(chars)
     if (!dirty && message === lastSaved) return
     saves = saves.catch(() => {}).then(async () => {
       try {
         await shared.say(target, message, automatic)
-        if (owner?.id === target.id && input.value === message) {
+        if (owner?.id === target.id && speechValue(chars) === message) {
           dirty = false; lastSaved = message; error.hidden = true
         }
       } catch (reason) {
@@ -53,7 +54,12 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   }
   const changed = () => {
     count(); dirty = true
-    if (owner) { shared.previewSpeech(owner.id, input.value, automaticIndices(chars)); focusPigeon?.(owner.id) }
+    if (owner) {
+      if(touchInput){
+        // Coalesce keyboard revisions without repeatedly moving the 3D camera.
+        previewTimer??=setTimeout(()=>{previewTimer=undefined;if(owner)shared.previewSpeech(owner.id,speechValue(chars),automaticIndices(chars))},100)
+      }else{shared.previewSpeech(owner.id, input.value, automaticIndices(chars)); focusPigeon?.(owner.id)}
+    }
     clearTimeout(saveTimer)
     // Supabase publishes submitted text; typing remains a preview in this browser.
     if (!SUPABASE_STORAGE) saveTimer = setTimeout(persist, 650)
@@ -64,17 +70,12 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     if (automaticIndices(result.chars).length === before) return
     if (automaticIndices(result.chars).length > before) {
       noiseStarted = true
-      resumeNoise = false; noiseDue = false; noiseProgress = 0; noiseInterval = 7 + Math.floor(Math.random() * 4)
+      resumeNoise = false; noiseDue = false; noiseProgress = 0; noiseInterval = nextNoiseInterval()
     }
     chars = result.chars; input.value = speechValue(chars); input.setSelectionRange(result.cursor, result.cursor); changed()
   }
   const applyNoise = (caret: number) => {
-    clearTimeout(noiseTimer)
-    if (!touchInput) { distort(caret); return }
-    // Let a touch keyboard finish composing/predicting before changing its value.
-    noiseTimer = setTimeout(() => {
-      if (!composing && !endingComposition && !submitPending && !panel.hidden && noiseDue) distort(input.selectionStart ?? input.value.length)
-    }, 120)
+    if (!touchInput) distort(caret)
   }
   const commitInput = (inputType = '', modelOnly = false) => {
     if (input.value === speechValue(chars)) {
@@ -84,24 +85,31 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     }
     const caret = input.selectionStart ?? input.value.length
     const previousCount = humanCount(chars)
-    const result = editSpeech(chars, input.value, caret, edit); edit = undefined
+    // Touch keyboards may replace an entire marked word, even when most of it
+    // is unchanged. Diff the actual value to preserve automatic provenance.
+    const result = editSpeech(chars, input.value, caret, touchInput?undefined:edit); edit = undefined
     // Removing even part of an automatic group re-arms noise for the next insertion.
     // Backspace itself must never create replacement noise.
-    if (inputType.startsWith('delete') && automaticIndices(result.chars).length < automaticIndices(chars).length) resumeNoise = true
+    if (!touchInput && inputType.startsWith('delete') && automaticIndices(result.chars).length < automaticIndices(chars).length) resumeNoise = true
     chars = result.chars
     const insertion = !inputType || inputType.startsWith('insert')
+    if(touchInput){
+      // Replacing/deleting/retyping the same syllable must not earn noise again.
+      noiseProgress=Math.max(0,noiseProgress+humanCount(chars)-previousCount)
+      noiseDue=noiseStarted?noiseProgress>=noiseInterval:humanCount(chars)>=3
+    }
     if (insertion && result.inserted > 0) {
       // Count committed characters equally for Latin input and completed Hangul syllables.
       // Carry the count through rapid IME transitions without changing its live DOM.
       // Mobile keyboards replace whole words and repeatedly revise a syllable.
       // Count only growth, not all characters reported by each replacement event.
-      noiseProgress += Math.max(0, humanCount(chars) - previousCount)
-      noiseDue ||= resumeNoise || !noiseStarted || noiseProgress >= noiseInterval
+      if(!touchInput){noiseProgress += Math.max(0, humanCount(chars) - previousCount)
+      noiseDue ||= resumeNoise || !noiseStarted || noiseProgress >= noiseInterval}
     }
     if (!chars.length) { noiseProgress = 0; noiseDue = false; noiseStarted = false }
     // Assigning value/selection during a Korean IME transition can recommit a syllable.
     // A new composition may consume the previous result into the model without touching DOM.
-    if (modelOnly) { changed(); return }
+    if (modelOnly || touchInput) { changed(); return }
     const next = speechValue(chars)
     if (input.value !== next) {
       input.value = next; input.setSelectionRange(result.cursor, result.cursor)
@@ -109,9 +117,16 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     if (insertion && result.inserted > 0 && input.value.trim() && noiseDue) { applyNoise(result.cursor); if (touchInput) changed() }
     else changed()
   }
+  const flushTouchInput=()=>{
+    if(!touchInput||composing||endingComposition)return
+    const caret=input.selectionStart??input.value.length,next=speechValue(chars)
+    if(input.value!==next){input.value=next;input.setSelectionRange(Math.min(caret,next.length),Math.min(caret,next.length))}
+    if(noiseDue&&input.value.trim())distort(input.selectionStart??input.value.length)
+  }
   input.addEventListener('beforeinput', event => {
     clearTimeout(noiseTimer)
     const type = (event as InputEvent).inputType
+    if(touchInput&&(type==='insertLineBreak'||type==='insertParagraph')){event.preventDefault();submit(true);return}
     if (endingComposition && type !== 'insertFromComposition' && type !== 'insertCompositionText') {
       clearTimeout(compositionTimer); endingComposition = false; commitInput('insertFromComposition', true)
     }
@@ -132,26 +147,48 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
       if (composing || !endingComposition) return
       endingComposition = false; commitInput('insertFromComposition', submitPending)
       if (submitPending) scheduleSubmit()
-    }, 0)
+      else if(touchInput)flushTouchInput()
+    }, touchInput?50:0)
   })
-  input.addEventListener('input', event => { if (!composing && !endingComposition && !(event as InputEvent).isComposing) commitInput((event as InputEvent).inputType) })
-  const finishClose = () => { clearTimeout(noiseTimer); panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
+  input.addEventListener('input', event => {
+    clearTimeout(noiseTimer)
+    const native=event as InputEvent
+    if (!composing && !endingComposition && !native.isComposing) commitInput(native.inputType)
+    // iOS Korean can omit composition events entirely. An idle timeout is NOT
+    // proof of Hangul commitment: use explicit composition end or a boundary.
+    // Plain Latin keystrokes can also flush after a short typing pause.
+    const boundary=/[\s!?.,;:。！？]$/.test(native.data??'')
+    const latin=/^[a-zA-Z0-9]+$/.test(native.data??'')
+    if(touchInput&&!native.isComposing&&native.inputType==='insertText'&&(boundary||latin)){
+      const value=input.value,caret=input.selectionStart
+      noiseTimer=setTimeout(()=>{
+        if(panel.hidden||submitPending||composing||endingComposition||input.value!==value||input.selectionStart!==caret||caret!==input.selectionEnd)return
+        commitInput('insertText',true);flushTouchInput()
+      },boundary?0:250)
+    }
+  })
+  const finishClose = () => { clearTimeout(noiseTimer);clearTimeout(previewTimer);previewTimer=undefined;panel.hidden = true; persist(); button.setAttribute('aria-expanded', 'false') }
   const scheduleSubmit = () => {
     clearTimeout(submitTimer)
     submitTimer = setTimeout(() => {
       if (!submitPending || enterHeld) return
       // Never blur or rewrite the value during Enter's native IME default action.
       // Some browsers finish composition on blur; defer that fallback until keyup.
-      if (composing) { input.blur(); return }
+      if (composing) {
+        if(touchInput&&document.activeElement!==input)composing=false
+        else{input.blur();return}
+      }
       clearTimeout(compositionTimer); endingComposition = false
-      commitInput('insertFromComposition'); submitPending = false
+      commitInput('insertFromComposition');flushTouchInput(); submitPending = false
       finishClose()
       if (focusAfterSubmit) button.focus()
       focusAfterSubmit = false
-    }, 0)
+    }, touchInput?32:0)
   }
   const submit = (returnFocus = false) => {
-    submitPending = true; focusAfterSubmit = returnFocus; scheduleSubmit()
+    submitPending = true; focusAfterSubmit = returnFocus
+    if(touchInput&&!enterHeld&&document.activeElement===input)input.blur()
+    scheduleSubmit()
   }
   const close = () => { if (panel.hidden) persist(); else submit() }
   button.onclick = () => {
@@ -200,6 +237,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
         // Save a surviving bird's draft before switching to a newer capture from another tab.
         if (owner && snapshot.birds.some(b => b.id === owner!.id)) persist()
         clearTimeout(compositionTimer); clearTimeout(saveTimer); composing = false; endingComposition = false
+        clearTimeout(previewTimer);previewTimer=undefined
         clearTimeout(submitTimer); submitPending = false; enterHeld = false; noiseProgress = 0; noiseDue = false
         clearTimeout(noiseTimer); owner = next; panel.hidden = true; button.setAttribute('aria-expanded', 'false')
         chars = []; input.value = ''; dirty = false; lastSaved = ''; edit = undefined; error.hidden = true; resumeNoise = false; noiseStarted = false

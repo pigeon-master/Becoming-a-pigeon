@@ -1,3 +1,5 @@
+import {FilesetResolver,HandLandmarker} from '@mediapipe/tasks-vision'
+
 export interface HandPose {x:number;y:number;strength:number;depth?:number}
 export interface HandWave extends HandPose {arms?:{left:HandPose;right:HandPose};conducting?:number;handCount?:number;flourish?:number;scatter?:number}
 interface Palm {x:number;y:number;time:number;size?:number;baseline?:number;aimX?:number;aimY?:number;wave?:HandPose}
@@ -81,23 +83,43 @@ export function conductorMotion(state:ConductorState|undefined,hands:{x:number;y
 export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:HandWave)=>void,onError:(error:Error)=>void,signal?:AbortSignal){
   if(!navigator.mediaDevices?.getUserMedia)throw new Error('카메라는 HTTPS 환경의 지원 브라우저에서 사용할 수 있어요.')
   let stopped=false,busy=false,timer:ReturnType<typeof setTimeout>|undefined,conductor:ConductorState|undefined,interval=83,frameStarted=0,lastVideoTime=-1,inferenceCost=0
-  const worker=new Worker(new URL('./hand-worker.ts',import.meta.url))
+  let worker:Worker|undefined
+  try{worker=new Worker(new URL('./hand-worker.ts',import.meta.url))}catch{/* Use compatibility mode after camera permission. */}
+  let mainTask:HandLandmarker|undefined,fallbackStarted=false,initRequested=false
+  const capture=document.createElement('canvas'),base=new URL(import.meta.env.BASE_URL,location.href).href
   let stream:MediaStream|undefined
-  let deadline:ReturnType<typeof setTimeout>|undefined,rejectReady:(error:Error)=>void=()=>{}
-  const stop=()=>{stopped=true;clearTimeout(timer);clearTimeout(deadline);worker.terminate();stream?.getTracks().forEach(track=>track.stop());video.srcObject=null;document.removeEventListener('visibilitychange',visibility);signal?.removeEventListener('abort',abort);rejectReady(new DOMException('손 추적이 종료됐어요.','AbortError'))}
+  let deadline:ReturnType<typeof setTimeout>|undefined,rejectReady:(error:Error)=>void=()=>{},resolveReady:()=>void=()=>{}
+  const stop=()=>{stopped=true;clearTimeout(timer);clearTimeout(deadline);worker?.terminate();mainTask?.close();mainTask=undefined;stream?.getTracks().forEach(track=>track.stop());video.srcObject=null;document.removeEventListener('visibilitychange',visibility);signal?.removeEventListener('abort',abort);rejectReady(new DOMException('손 추적이 종료됐어요.','AbortError'))}
   const abort=()=>stop()
   const visibility=()=>{if(document.hidden){stop();onError(new Error('화면을 벗어나 카메라를 껐어요.'))}}
+  const consume=(data:{landmarks:{x:number;y:number}[][];handedness?:{categoryName:string;score:number}[][];time:number;cost:number})=>{
+    if(stopped)return
+    busy=false;const result=conductorMotion(conductor,data.landmarks??[],data.time,video.videoWidth/video.videoHeight||4/3,data.handedness);conductor=result.state;onWave(result.wave)
+    inferenceCost=inferenceCost?inferenceCost*.7+data.cost*.3:data.cost
+    interval=Math.min(400,Math.max(mainTask?180:83,inferenceCost*(mainTask?2.5:1.5)));schedule(Math.max(8,interval-(performance.now()-frameStarted)))
+  }
+  const fallback=async()=>{
+    if(fallbackStarted||stopped)return;fallbackStarted=true;worker?.terminate();worker=undefined
+    try{
+      const files=await FilesetResolver.forVisionTasks(new URL('models/wasm',base).href)
+      if(stopped)return
+      const task=await HandLandmarker.createFromOptions(files,{canvas:document.createElement('canvas'),baseOptions:{modelAssetPath:new URL('models/hand_landmarker.task',base).href,delegate:'CPU'},runningMode:'VIDEO',numHands:2,minHandDetectionConfidence:.4,minHandPresenceConfidence:.4,minTrackingConfidence:.4})
+      if(stopped){task.close();return}
+      mainTask=task;clearTimeout(deadline);resolveReady()
+    }catch(error){if(!stopped)rejectReady(error instanceof Error?error:new Error(String(error)))}
+  }
   const ready=new Promise<void>((resolve,reject)=>{
-    rejectReady=reject
-    worker.onerror=()=>{clearTimeout(deadline);reject(new Error('이 브라우저에서 손 추적을 실행할 수 없어요.'));if(!stopped)onError(new Error('손 추적을 중단했어요.'))}
+    rejectReady=reject;resolveReady=resolve
+    if(!worker)return
+    let initialized=false
+    worker.onerror=()=>{if(!initialized){if(!initRequested){worker?.terminate();worker=undefined}else void fallback();return}clearTimeout(deadline);reject(new Error('이 브라우저에서 손 추적을 실행할 수 없어요.'));if(!stopped)onError(new Error('손 추적을 중단했어요.'))}
     worker.onmessage=event=>{
       const data=event.data
-      if(data.type==='ready'){clearTimeout(deadline);resolve()}
+      if(data.type==='ready'){initialized=true;clearTimeout(deadline);resolve()}
+      else if(data.type==='fallback')void fallback()
       else if(data.type==='error'){clearTimeout(deadline);const error=new Error(data.message);reject(error);if(!stopped)onError(error)}
       else if(data.type==='result'){
-        busy=false;const result=conductorMotion(conductor,data.landmarks??[],data.time??performance.now(),video.videoWidth/video.videoHeight||4/3,data.handedness);conductor=result.state;onWave(result.wave)
-        inferenceCost=inferenceCost?inferenceCost*.7+data.cost*.3:data.cost
-        interval=Math.min(400,Math.max(83,inferenceCost*1.5));schedule(Math.max(8,interval-(performance.now()-frameStarted)))
+        consume(data)
       }
     }
   })
@@ -108,7 +130,18 @@ export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:Hand
     if(video.readyState<2||video.currentTime===lastVideoTime){schedule(16);return}
     lastVideoTime=video.currentTime;frameStarted=performance.now()
     busy=true
-    try{const width=inferenceCost>65?320:480,height=width*.75,scale=Math.min(width/video.videoWidth,height/video.videoHeight);const bitmap=await createImageBitmap(video,{resizeWidth:Math.max(1,Math.round(video.videoWidth*scale)),resizeHeight:Math.max(1,Math.round(video.videoHeight*scale))});if(stopped){bitmap.close();return}worker.postMessage({type:'frame',bitmap,time:frameStarted},[bitmap])}catch(error){stop();onError(error instanceof Error?error:new Error(String(error)))}
+    try{
+      const width=mainTask||inferenceCost>65?320:480,height=width*.75,scale=Math.min(width/video.videoWidth,height/video.videoHeight)
+      const w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale))
+      if(mainTask){
+        if(capture.width!==w||capture.height!==h){capture.width=w;capture.height=h}
+        const context=capture.getContext('2d');if(!context)throw new Error('카메라 영상을 처리할 수 없어요.')
+        context.drawImage(video,0,0,w,h);const start=performance.now(),result=mainTask.detectForVideo(capture,frameStarted)
+        consume({...result,time:frameStarted,cost:performance.now()-start})
+      }else{
+        const bitmap=await createImageBitmap(video,{resizeWidth:w,resizeHeight:h});if(stopped){bitmap.close();return}worker!.postMessage({type:'frame',bitmap,time:frameStarted},[bitmap])
+      }
+    }catch(error){stop();onError(error instanceof Error?error:new Error(String(error)))}
   }
   const schedule=(delay=interval)=>{if(!stopped)timer=setTimeout(frame,delay)}
   try{
@@ -119,7 +152,9 @@ export async function startHandTracking(video:HTMLVideoElement,onWave:(wave:Hand
     document.addEventListener('visibilitychange',visibility)
     video.srcObject=stream;video.muted=true;await video.play()
     deadline=setTimeout(()=>rejectReady(new Error('손 추적 모델을 준비하지 못했어요. 다시 시도해 주세요.')),25000)
-    worker.postMessage({type:'init',base:new URL(import.meta.env.BASE_URL,location.href).href});await ready
+    initRequested=true
+    if(worker)worker.postMessage({type:'init',base});else void fallback()
+    await ready
     if(stopped)throw new Error('손 추적이 종료됐어요.')
     schedule();return{stop}
   }catch(error){stop();void ready.catch(()=>{});throw error}

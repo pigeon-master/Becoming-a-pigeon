@@ -12,6 +12,8 @@
     "test:physics": "node --experimental-strip-types --test scripts/physics.test.ts",
     "test:persistence": "node --experimental-strip-types --test scripts/persistence.test.ts",
     "test:speech": "node --experimental-strip-types --test scripts/speech.test.ts",
+    "test:mobile-speech": "node scripts/mobile-speech-browser.mjs",
+    "test:hand-tracking": "node scripts/hand-tracking-browser.mjs",
     "dev": "vite",
     "build": "tsc && tsc -p tsconfig.server.json && vite build",
     "build:server": "tsc && tsc -p tsconfig.server.json && vite build --mode server",
