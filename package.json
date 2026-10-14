@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:analytics": "node --experimental-strip-types --test scripts/analytics.test.ts",
+    "test:analytics-browser": "node scripts/analytics-browser.mjs",
     "test:compatibility": "node scripts/compatibility-browser.mjs",
     "test:wizard": "node scripts/wizard-browser.mjs",
     "test:human": "node scripts/human-browser.mjs",

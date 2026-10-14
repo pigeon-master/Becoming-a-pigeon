@@ -62,6 +62,7 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
   const wave:HandWave={x:0,y:0,strength:0},requested:HandWave={x:0,y:0,strength:0}
   let flightHeight=0
   let vortexUntil=0,vortexAngle=0,vortexActive=false,patternActive=false
+  let lastPattern=''
   const anchor=new THREE.Vector3(),screen=new THREE.Vector3(),correction=new THREE.Vector3()
   const beforeControl:THREE.Vector3[]=[],viewForward=new THREE.Vector3()
   const projectionView=new THREE.Matrix4(),clipFrom=new THREE.Vector4(),clipTo=new THREE.Vector4()
@@ -254,7 +255,9 @@ export function createWizardVisit(scene:THREE.Scene,camera:THREE.PerspectiveCame
           bird.velocity.clampLength(0,14)
         }
         container.dataset.wizardFlockCenter=flockCenter.toArray().join(',')
-        container.dataset.wizardFlockMode=vortex?'vortex':flourish?'ribbon':flightHeight>.1?'flying':'walking'
+        const pattern=vortex?'vortex':flourish?'ribbon':flightHeight>.1?'flying':'walking'
+        container.dataset.wizardFlockMode=pattern
+        if(pattern!==lastPattern){lastPattern=pattern;container.dispatchEvent(new CustomEvent('wizardpattern',{detail:{pattern}}))}
         if(time>=enterDuration+turnDuration+controlDuration)visit.stop()
       }
       if(!disposed){

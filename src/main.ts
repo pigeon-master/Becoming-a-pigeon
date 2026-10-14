@@ -8,6 +8,7 @@ import { createFace } from './face'
 import { startHandTracking } from './hand-tracking'
 import { readOwners } from './ownership'
 import { loadWizardPhotos } from './wizard'
+import { analyticsError, bindExampleAnalytics, track, trackOperation } from './analytics'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <p id="copyright"><span class="wide-text">ⓒ2026. CRAPPYROOM.</span></p>
@@ -33,6 +34,7 @@ let world: ReturnType<typeof createWorld> | undefined
 try { world = createWorld(el('world')) }
 catch { el('world-error').hidden = false; el('world-error').textContent = '3D 화면을 열 수 없습니다. 브라우저의 하드웨어 가속을 확인해 주세요.'; el<HTMLButtonElement>('join').disabled = true }
 let stream: MediaStream | undefined, requestId = 0, busy = false
+let captureCompleted=false
 let speech: ReturnType<typeof createSpeech> | undefined
 const shared = world ? connectFlock(world, error => {
   el('world-error').hidden = !error; el('world-error').textContent = error ?? ''
@@ -47,32 +49,38 @@ let deleting = false
 let poodleRunning = false
 let wizardAbort:AbortController|undefined,wizardTracking:Awaited<ReturnType<typeof startHandTracking>>|undefined
 let wizardSessionTimer:ReturnType<typeof setTimeout>|undefined
-const stopWizardCamera=()=>{clearTimeout(wizardSessionTimer);wizardAbort?.abort();wizardTracking?.stop();wizardTracking=undefined;el('magic-camera').hidden=true;el('magic-stop').hidden=true}
-el('world').addEventListener('wizardcontrolstart',()=>{if(!el('magic-camera').hidden)el('magic-stop').hidden=false;clearTimeout(wizardSessionTimer);wizardSessionTimer=setTimeout(()=>{stopWizardCamera();world?.stopWizard()},60000)})
-el('magic-stop').onclick=()=>{if(el('magic-stop').hidden)return;stopWizardCamera();world?.stopWizard()}
+const exampleAnalytics=bindExampleAnalytics(el('world'),()=>world?.count??0)
+const stopWizardCamera=()=>{const wasOpen=!el('magic-camera').hidden;clearTimeout(wizardSessionTimer);wizardAbort?.abort();wizardTracking?.stop();wizardTracking=undefined;el('magic-camera').hidden=true;el('magic-stop').hidden=true;if(wasOpen)track('camera_close',{camera_purpose:'wizard'})}
+el('world').addEventListener('wizardcontrolstart',()=>{if(!el('magic-camera').hidden)el('magic-stop').hidden=false;clearTimeout(wizardSessionTimer);wizardSessionTimer=setTimeout(()=>{exampleAnalytics.stopControl('timeout');stopWizardCamera();world?.stopWizard()},60000)})
+el('magic-stop').onclick=()=>{if(el('magic-stop').hidden)return;exampleAnalytics.stopControl('user_close');stopWizardCamera();world?.stopWizard()}
 el('world').addEventListener('wizardtrackingend',stopWizardCamera)
 window.addEventListener('pagehide',stopWizardCamera)
 for (const visitor of ['poodle', 'human', 'car', 'wizard']) el(visitor).onclick = async () => {
   if (!world || deleting || poodleRunning) return
+  exampleAnalytics.request(visitor==='poodle'?'dog':visitor as 'human'|'car'|'wizard')
   poodleRunning = true; speech?.close(); el('world').dataset.visitorActive = 'true'
   for (const id of ['poodle', 'human', 'car', 'wizard', 'join', 'speak', 'remove-pigeon']) el<HTMLButtonElement>(id).disabled = true
   let wizardVisit:Promise<void>|undefined
   try {
     if(visitor==='wizard'){
       wizardAbort=new AbortController();el('magic-stop').hidden=true;el('magic-camera').hidden=false;el('magic-loading').hidden=false
+      track('camera_open',{camera_purpose:'wizard'})
       const signal=wizardAbort.signal
       void loadWizardPhotos().catch(()=>{})
-      wizardTracking=await startHandTracking(el<HTMLVideoElement>('magic-video'),wave=>world?.wizardWave(wave),error=>{if(!signal.aborted){el('world-error').textContent=error.message;el('world-error').hidden=false;stopWizardCamera();world?.stopWizard()}},signal,()=>{
+      wizardTracking=await startHandTracking(el<HTMLVideoElement>('magic-video'),wave=>world?.wizardWave(wave),error=>{if(!signal.aborted){if(document.hidden)exampleAnalytics.cancel('page_hidden');else exampleAnalytics.fail(error);el('world-error').textContent=error.message;el('world-error').hidden=false;stopWizardCamera();world?.stopWizard()}},signal,()=>{
+        track('camera_ready',{camera_purpose:'wizard'})
         wizardVisit=world!.releaseWizard(signal)
         void wizardVisit.catch(()=>{stopWizardCamera()})
       })
       if(wizardAbort.signal.aborted){wizardTracking.stop();return}
       el('magic-loading').hidden=true
+      exampleAnalytics.trackingReady()
       await wizardVisit
     }else await(visitor==='human'?world.releaseHuman():visitor==='car'?world.releaseCar():world.releasePoodle())
   }
-  catch (error) { if(visitor==='wizard'){stopWizardCamera();world.stopWizard();await wizardVisit?.catch(reason=>{error=reason})}if(visitor==='wizard' && error instanceof DOMException && error.name==='AbortError')return; el('world-error').textContent = error instanceof Error ? error.message : '방문자를 불러오지 못했어요.'; el('world-error').hidden = false }
+  catch (error) { if(!(error instanceof DOMException&&error.name==='AbortError'))exampleAnalytics.fail(error);if(visitor==='wizard'){stopWizardCamera();world.stopWizard();await wizardVisit?.catch(reason=>{error=reason;exampleAnalytics.fail(reason)})}if(visitor==='wizard' && error instanceof DOMException && error.name==='AbortError'){exampleAnalytics.cancel(document.hidden?'page_hidden':'cancelled');return}; el('world-error').textContent = error instanceof Error ? error.message : '방문자를 불러오지 못했어요.'; el('world-error').hidden = false }
   finally {
+    exampleAnalytics.finishPending()
     poodleRunning = false; delete el('world').dataset.visitorActive
     if(visitor==='wizard')stopWizardCamera()
     for (const id of ['poodle', 'human', 'car', 'wizard', 'join', 'speak', 'remove-pigeon']) el<HTMLButtonElement>(id).disabled = false
@@ -93,8 +101,10 @@ el('remove-ok').onclick = async () => {
   el<HTMLButtonElement>('remove-pigeon').disabled = true
   el<HTMLButtonElement>('join').disabled = true
   removalDialog.close()
-  try { await shared.remove(owner) }
+  const finishDeletion=trackOperation('pigeon_delete',{pigeon_count:world?.count??0})
+  try { await shared.remove(owner);finishDeletion('completed') }
   catch (error) {
+    finishDeletion('failed',error)
     el('remove-error').textContent = error instanceof Error ? error.message : '삭제하지 못했어요. 다시 시도해 주세요.'
     el('remove-error').hidden = false; removalDialog.showModal()
   } finally {
@@ -118,20 +128,23 @@ async function startCamera() {
     if (request !== requestId || !dialog.open) return
     if (!video.videoWidth || !video.videoHeight) throw new Error('카메라 화면을 읽지 못했어요. 다시 시도해 주세요.')
     snap.disabled = false
+    track('camera_ready',{camera_purpose:'pigeon'})
   } catch (error) {
     if (request !== requestId || !dialog.open) return
+    track('camera_error',{camera_purpose:'pigeon',error_code:analyticsError(error)})
     stopCamera()
     showError(error instanceof DOMException && error.name === 'NotAllowedError' ? '카메라 권한을 허용한 뒤 다시 시도해 주세요.' : error instanceof Error && !(error instanceof DOMException) ? error.message : '카메라를 연결하지 못했어요. 연결 상태를 확인하고 다시 시도해 주세요.')
   } finally { if (request === requestId) loading.hidden = true }
 }
-el('join').onclick = () => { speech?.close(); dialog.showModal(); void startCamera() }
+el('join').onclick = () => { speech?.close();captureCompleted=false;track('camera_open',{camera_purpose:'pigeon'}); dialog.showModal(); void startCamera() }
 retry.onclick = () => { void startCamera() }
 el('close').onclick = () => dialog.close()
-dialog.addEventListener('close', () => { requestId++; stopCamera(); clearPhoto(); loading.hidden = true; busy = false })
+dialog.addEventListener('close', () => { track('camera_close',{camera_purpose:'pigeon',outcome:captureCompleted?'completed':'cancelled'});requestId++; stopCamera(); clearPhoto(); loading.hidden = true; busy = false })
 snap.onclick = async () => {
   if (busy || !world || !video.videoWidth || snap.disabled) return
   busy = true; snap.disabled = true; retry.hidden = true; status.hidden = true
   const request = requestId
+  const finishCreation=trackOperation('pigeon_create',{pigeon_count:world.count})
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight))
   photo.width = Math.round(video.videoWidth * scale); photo.height = Math.round(video.videoHeight * scale)
   photo.getContext('2d')!.drawImage(video, 0, 0, photo.width, photo.height)
@@ -146,14 +159,15 @@ snap.onclick = async () => {
     // Raise the minimum and increase the previous .56 maximum by 10%.
     const face = await createFace(snapshot, .30 + Math.random() * .316)
     if (request !== requestId || !dialog.open) { face.geometry.dispose(); face.material.map?.dispose(); face.material.dispose(); return }
-    try { speech?.setOwner(await shared!.publish(face)) }
+    try { speech?.setOwner(await shared!.publish(face));captureCompleted=true;finishCreation('completed') }
     finally { face.geometry.dispose(); face.material.map?.dispose(); face.material.dispose() }
     if (request === requestId && dialog.open) dialog.close()
   } catch (error) {
+    finishCreation('failed',error)
     if (request !== requestId || !dialog.open) return
     console.error('Pigeon creation failed:', error)
     showError(error instanceof Error && (SUPABASE_STORAGE || error.message.includes('얼굴') || error.message.includes('광장') || error.message.includes('서버') || error.message.includes('브라우저')) ? error.message : '얼굴 변환 또는 저장을 완료하지 못했어요. 다시 시도해 주세요.')
-  } finally { if (request === requestId) { busy = false; loading.hidden = true } }
+  } finally { finishCreation('cancelled');if (request === requestId) { busy = false; loading.hidden = true } }
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden && stream) { requestId++; stopCamera(); loading.hidden = true; showError('카메라가 꺼졌어요. 다시 켜서 촬영해 주세요.') } })
 window.addEventListener('pagehide', () => { requestId++; stopCamera() })

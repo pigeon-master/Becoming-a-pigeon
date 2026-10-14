@@ -4,6 +4,7 @@ import type { connectFlock } from './shared-flock'
 import type { FlockSnapshot, PigeonOwner } from './pigeon-data'
 import { readOwners, rememberOwners } from './ownership'
 import { SUPABASE_STORAGE } from './storage-mode'
+import { analyticsError, track } from './analytics'
 
 export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeon?: (id: string) => void) {
   const button = document.getElementById('speak') as HTMLButtonElement
@@ -29,19 +30,25 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
   let compositionTimer: ReturnType<typeof setTimeout>, saveTimer: ReturnType<typeof setTimeout>, submitTimer: ReturnType<typeof setTimeout>
   let noiseTimer: ReturnType<typeof setTimeout>, previewTimer: ReturnType<typeof setTimeout> | undefined
   let saves = Promise.resolve()
+  let lastMeasuredSave: { id: string; message: string } | undefined
   const count = () => { counter.textContent = `${humanCount(chars)} / ${SPEECH_LIMIT}` }
   const persist = () => {
     clearTimeout(saveTimer)
     if (!owner || composing || endingComposition) return
     const target = { ...owner }, message = speechValue(chars), automatic = automaticIndices(chars)
+    const characterCount=humanCount(chars)
     if (!dirty && message === lastSaved) return
     saves = saves.catch(() => {}).then(async () => {
       try {
         await shared.say(target, message, automatic)
+        if(lastMeasuredSave?.id!==target.id||lastMeasuredSave.message!==message){
+          track('speech_saved',{character_count:characterCount});lastMeasuredSave={id:target.id,message}
+        }
         if (owner?.id === target.id && speechValue(chars) === message) {
           dirty = false; lastSaved = message; error.hidden = true
         }
       } catch (reason) {
+        track('speech_error',{error_code:analyticsError(reason)})
         if (owner?.id !== target.id) return
         error.textContent = reason instanceof Error ? reason.message : '말풍선을 저장하지 못했어요. 다시 시도해 주세요.'
         error.hidden = false
@@ -196,6 +203,7 @@ export function createSpeech(shared: ReturnType<typeof connectFlock>, focusPigeo
     if (!panel.hidden) { submit(true); return }
     focusPigeon?.(owner.id)
     panel.hidden = false; button.setAttribute('aria-expanded', 'true'); count(); input.focus()
+    track('speech_open')
   }
   document.getElementById('speech-close')!.onclick = () => submit(true)
   document.addEventListener('click', event => {

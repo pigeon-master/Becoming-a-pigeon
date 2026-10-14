@@ -208,7 +208,8 @@ export function createWorld(container: HTMLElement) {
     behaviors.cancel();controls.enabled=false
     const maxDistance=controls.maxDistance;controls.maxDistance=1000
     return new Promise<void>(resolve=>{
-      visit=createWizardVisit(scene,camera,container,birds,()=>{visit=undefined;controls.maxDistance=maxDistance;controls.enabled=true;resolve();container.dispatchEvent(new Event('poodleend'))},controls.target)
+      visit=createWizardVisit(scene,camera,container,birds,()=>{visit=undefined;controls.maxDistance=maxDistance;controls.enabled=true;resolve();container.dispatchEvent(new CustomEvent('visitorend',{detail:{exampleType:'wizard'}}));container.dispatchEvent(new Event('poodleend'))},controls.target)
+      container.dispatchEvent(new CustomEvent('visitorstart',{detail:{exampleType:'wizard'}}))
     })
   }
   const releaseCar = async () => {
@@ -219,8 +220,9 @@ export function createWorld(container: HTMLElement) {
     const maxDistance=controls.maxDistance;controls.maxDistance=1000
     return new Promise<void>(resolve => {
       visit = createCarVisit(scene, camera, container, birds, () => {
-        visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new Event('poodleend'))
+        visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new CustomEvent('visitorend',{detail:{exampleType:'car'}}));container.dispatchEvent(new Event('poodleend'))
       },controls.target)
+      container.dispatchEvent(new CustomEvent('visitorstart',{detail:{exampleType:'car'}}))
     })
   }
   const releasePoodle = async (human = false) => {
@@ -235,7 +237,8 @@ export function createWorld(container: HTMLElement) {
     return new Promise<void>(resolve => {
       visit = createPoodleVisit(scene, camera, container, birds,
         () => { controls.maxDistance=maxDistance;controls.enabled = true; resolve() },
-        () => { visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new Event('poodleend')) }, human,controls.target)
+        () => { visit = undefined; controls.maxDistance=maxDistance;controls.enabled = true; resolve(); container.dispatchEvent(new CustomEvent('visitorend',{detail:{exampleType:human?'human':'dog'}}));container.dispatchEvent(new Event('poodleend')) }, human,controls.target)
+      container.dispatchEvent(new CustomEvent('visitorstart',{detail:{exampleType:human?'human':'dog'}}))
     })
   }
   const removing = new Set<string>()
